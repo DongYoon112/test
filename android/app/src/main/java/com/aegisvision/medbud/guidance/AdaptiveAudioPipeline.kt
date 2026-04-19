@@ -88,10 +88,15 @@ class AdaptiveAudioPipeline(private val context: Context) {
         }
         val bufSize = maxOf(minBuf, FRAME_SAMPLES * 4)
         val record = try {
-            // VOICE_RECOGNITION applies lighter OS preprocessing than MIC,
-            // which is what we want — we're doing our own VAD and NS.
+            // IMPORTANT: use MIC, not VOICE_RECOGNITION / VOICE_COMMUNICATION.
+            // The non-MIC sources are treated as "voice call audio" by some
+            // BT stacks, which triggers A2DP → SCO renegotiation to grab
+            // the glasses' mic — that kills the active A2DP stream the DAT
+            // session is riding on, and the glasses drop the session with a
+            // double beep. MIC lets the phone record from its own built-in
+            // mic without touching BT routing.
             AudioRecord(
-                MediaRecorder.AudioSource.VOICE_RECOGNITION,
+                MediaRecorder.AudioSource.MIC,
                 SAMPLE_RATE, CHANNEL_CFG, ENCODING, bufSize,
             )
         } catch (t: Throwable) {
@@ -103,16 +108,16 @@ class AdaptiveAudioPipeline(private val context: Context) {
             return@withContext
         }
 
-        // Platform voice isolation, attached but disabled. Router flips
-        // it on when noise floor warrants. Availability varies by device
-        // — we treat absence as "only the raw path is possible".
-        val ns: NoiseSuppressor? = if (NoiseSuppressor.isAvailable()) {
-            try {
-                NoiseSuppressor.create(record.audioSessionId)
-                    ?.also { it.enabled = false }
-            } catch (_: Throwable) { null }
-        } else null
-        Log.i(TAG, "pipeline start — NoiseSuppressor available=${ns != null}")
+        // NOTE: NoiseSuppressor is intentionally NOT attached here.
+        // Creating or toggling the effect on an active AudioRecord
+        // session causes the Android audio framework to rebuild the
+        // capture graph on some devices — and on BT A2DP stacks that
+        // rebuild includes a route re-check that kills the DAT video
+        // session (orange LED → stream drops). If we ever want platform
+        // voice isolation back, it has to be enabled BEFORE the DAT
+        // session is set up, not while the stream is live.
+        val ns: NoiseSuppressor? = null
+        Log.i(TAG, "pipeline start — NoiseSuppressor disabled for BT safety")
 
         val vad = EnergyVad()
         val scorer = NoiseScorer()

@@ -49,5 +49,11 @@
             android:exported="false"
             android:label="Perception (debug)"
             android:parentActivityName=".MainActivity" />
+
+        <activity
+            android:name=".report.HandoffReportActivity"
+            android:exported="false"
+            android:label="Handoff report"
+            android:parentActivityName=".MainActivity" />
     </application>
 </manifest>

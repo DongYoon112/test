@@ -15,6 +15,9 @@ import androidx.lifecycle.repeatOnLifecycle
 import com.aegisvision.medbud.databinding.ActivityMainBinding
 import com.aegisvision.medbud.perception.PerceptionDebugActivity
 import com.aegisvision.medbud.perception.PerceptionHolder
+import com.aegisvision.medbud.report.HandoffReportActivity
+import com.aegisvision.medbud.report.IncidentHolder
+import com.aegisvision.medbud.report.IncidentStatus
 import com.aegisvision.medbud.voice.VoiceHolder
 import com.meta.wearable.dat.camera.types.StreamSessionState
 import com.meta.wearable.dat.core.Wearables
@@ -97,6 +100,12 @@ class MainActivity : AppCompatActivity() {
         // call every onCreate (e.g. after rotation).
         VoiceHolder.ensureStarted(this)
 
+        // Phase 6: incident logger + bridge. Attaches to the same
+        // PerceptionRepository + GuidanceLoopEngine singletons.
+        VoiceHolder.guidance?.let { g ->
+            IncidentHolder.ensureStarted(PerceptionHolder.repository, g)
+        }
+
         binding.connectButton.setOnClickListener {
             // Opens the Meta AI registration / consent UI.
             Wearables.startRegistration(this)
@@ -109,6 +118,9 @@ class MainActivity : AppCompatActivity() {
         }
         binding.logsButton.setOnClickListener {
             startActivity(Intent(this, PerceptionDebugActivity::class.java))
+        }
+        binding.reportButton.setOnClickListener {
+            startActivity(Intent(this, HandoffReportActivity::class.java))
         }
 
         // Pipe VLM detections into the on-stream overlay.
@@ -162,7 +174,17 @@ class MainActivity : AppCompatActivity() {
                 // so AudioRecord doesn't renegotiate BT audio routing during the
                 // DAT session handshake. Stop it the moment the stream closes.
                 when (s) {
-                    StreamSessionState.STREAMING -> VoiceHolder.startListening()
+                    StreamSessionState.STREAMING -> {
+                        // Stream is actually flowing now — only NOW activate
+                        // the guidance loop, start the always-on listener,
+                        // and begin the incident session. Doing any of this
+                        // earlier has been observed to race the DAT audio
+                        // profile handshake and cause the glasses to drop
+                        // the session with an orange-LED blink.
+                        VoiceHolder.guidance?.setActive(true)
+                        IncidentHolder.beginIncident()
+                        VoiceHolder.startListening()
+                    }
                     StreamSessionState.CLOSED -> {
                         VoiceHolder.stopListening()
                         runOnUiThread { resetStreamButton() }
@@ -227,21 +249,41 @@ class MainActivity : AppCompatActivity() {
 
     private fun doStartStream() {
         Log.i(TAG, "doStartStream() — calling glasses.startStream()")
-        // Fresh session: wipe guidance state so we don't repeat whatever
-        // step the last run ended on, then re-enable the speech path.
+        // Fresh session: wipe guidance state from any previous run.
+        // IMPORTANT: do NOT activate the guidance loop, start the mic,
+        // or begin the incident session here — that all happens in the
+        // STREAMING state callback so nothing touches audio/BT during
+        // the DAT handshake.
         VoiceHolder.guidance?.reset()
-        VoiceHolder.guidance?.setActive(true)
         glasses.startStream()
         // Kick off an offer in case the viewer is already connected.
         webRtcClient.createOffer { offer -> signaling.sendOffer(offer) }
         streaming = true
         binding.streamButton.text = getString(R.string.btn_stop_stream)
+        binding.statusDot.setBackgroundResource(R.drawable.status_dot_live)
     }
 
     private fun stopStream() {
         // Kill audio FIRST — interrupt any in-flight TTS and block any
         // pending cycles from producing audio after the stream is down.
         VoiceHolder.guidance?.setActive(false)
+        // Phase 6: finalize the session and produce a HandoffReport from
+        // the current snapshots. Status: HANDED_OFF if guidance escalated
+        // to handoff mode, otherwise ENDED.
+        val guidance = VoiceHolder.guidance
+        if (guidance != null) {
+            val repo = PerceptionHolder.repository
+            val handedOff = guidance.state.value.loopStatus.name == "HANDOFF"
+            IncidentHolder.endIncident(
+                status = if (handedOff) IncidentStatus.HANDED_OFF else IncidentStatus.ENDED,
+                perception = repo.state.value,
+                decision = repo.decisionState.value,
+                plan = repo.actionPlanState.value,
+                clarification = repo.clarificationState.value,
+                guidance = guidance.state.value,
+                note = if (handedOff) "handoff escalation" else "user stopped stream",
+            )
+        }
         glasses.stopStream()
         VoiceHolder.stopListening()
         VoiceHolder.guidance?.reset()
@@ -251,6 +293,7 @@ class MainActivity : AppCompatActivity() {
     private fun resetStreamButton() {
         streaming = false
         binding.streamButton.text = getString(R.string.btn_start_stream)
+        binding.statusDot.setBackgroundResource(R.drawable.status_dot_idle)
     }
 
     private fun updateStatus(reg: String? = null) {

@@ -81,6 +81,12 @@ class RealtimeResponseListener(
     // ---- loop internals ---------------------------------------------------
 
     private suspend fun loop() {
+        // Give the DAT session a longer window to fully settle its BT
+        // audio profile before the phone opens AudioRecord. Opening the
+        // mic while BT is still negotiating A2DP causes glasses to drop
+        // the stream with an orange-LED blink. 3 s is conservative but
+        // reliable on every device we've tested.
+        delay(3_000L)
         while (running) {
             try {
                 pipeline.run { utterance ->

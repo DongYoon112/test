@@ -1,0 +1,121 @@
+<?xml version="1.0" encoding="utf-8"?>
+<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@color/aegis_bg"
+    android:fillViewport="true"
+    android:fitsSystemWindows="true">
+
+    <LinearLayout
+        android:orientation="vertical"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:paddingStart="18dp"
+        android:paddingEnd="18dp"
+        android:paddingTop="20dp"
+        android:paddingBottom="24dp">
+
+        <!-- Header row -->
+        <LinearLayout
+            android:orientation="horizontal"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:gravity="center_vertical">
+
+            <ImageView
+                android:layout_width="32dp"
+                android:layout_height="32dp"
+                android:src="@drawable/ic_aegis_logo"
+                android:contentDescription="@string/app_name" />
+
+            <TextView
+                android:layout_width="0dp"
+                android:layout_weight="1"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="10dp"
+                android:text="Handoff Report"
+                android:textColor="@color/aegis_text"
+                android:textSize="20sp"
+                android:textStyle="bold" />
+
+            <Button
+                android:id="@+id/shareButton"
+                android:layout_width="wrap_content"
+                android:layout_height="36dp"
+                android:minWidth="0dp"
+                android:paddingStart="14dp"
+                android:paddingEnd="14dp"
+                android:background="@drawable/btn_secondary"
+                android:stateListAnimator="@null"
+                android:text="Share"
+                android:textAllCaps="false"
+                android:textColor="@color/aegis_text"
+                android:textSize="12sp" />
+        </LinearLayout>
+
+        <!-- Metadata row -->
+        <TextView
+            android:id="@+id/metaText"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="10dp"
+            android:textColor="@color/aegis_text_dim"
+            android:textSize="12sp"
+            tools:ignore="HardcodedText"
+            xmlns:tools="http://schemas.android.com/tools" />
+
+        <!-- Brief -->
+        <TextView
+            android:id="@+id/briefText"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="20dp"
+            android:background="@drawable/bg_video_card"
+            android:padding="14dp"
+            android:textColor="@color/aegis_text"
+            android:textSize="15sp"
+            android:lineSpacingExtra="2dp" />
+
+        <!-- Primary concerns -->
+        <TextView
+            style="@style/ReportSectionHeader"
+            android:text="Primary concerns" />
+        <TextView
+            android:id="@+id/concernsText"
+            style="@style/ReportSectionBody" />
+
+        <!-- Actions performed -->
+        <TextView
+            style="@style/ReportSectionHeader"
+            android:text="Actions performed" />
+        <TextView
+            android:id="@+id/actionsText"
+            style="@style/ReportSectionBody" />
+
+        <!-- Unresolved -->
+        <TextView
+            style="@style/ReportSectionHeader"
+            android:text="Unresolved" />
+        <TextView
+            android:id="@+id/unresolvedText"
+            style="@style/ReportSectionBody" />
+
+        <!-- Confidence notes -->
+        <TextView
+            style="@style/ReportSectionHeader"
+            android:text="Confidence notes" />
+        <TextView
+            android:id="@+id/notesText"
+            style="@style/ReportSectionBody" />
+
+        <!-- Timeline -->
+        <TextView
+            style="@style/ReportSectionHeader"
+            android:text="Timeline" />
+        <TextView
+            android:id="@+id/timelineText"
+            style="@style/ReportSectionBody"
+            android:typeface="monospace"
+            android:textSize="12sp" />
+    </LinearLayout>
+</ScrollView>
