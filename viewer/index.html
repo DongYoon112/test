@@ -1,0 +1,76 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>POV Viewer</title>
+  <style>
+    body { margin: 0; background: #111; color: #eee; font-family: system-ui; }
+    header { padding: 12px; display: flex; gap: 8px; align-items: center; }
+    video { width: 100%; background: #000; max-height: 80vh; }
+    input { flex: 1; padding: 6px; }
+    button { padding: 6px 12px; }
+    #status { padding: 0 12px 12px; font-size: 14px; color: #8cf; }
+  </style>
+</head>
+<body>
+  <header>
+    <input id="signalUrl" value="ws://192.168.4.58:8080" />
+    <button id="go">Go</button>
+  </header>
+  <div id="status">idle</div>
+  <video id="remoteVideo" autoplay playsinline muted></video>
+
+  <script>
+    const $ = (id) => document.getElementById(id);
+    const status = (s) => { $('status').textContent = s; console.log(s); };
+
+    const iceServers = [{ urls: 'stun:stun.l.google.com:19302' }];
+    let pc, ws;
+
+    $('go').onclick = async () => {
+      const base = $('signalUrl').value.trim();
+      ws = new WebSocket(`${base}?role=viewer`);
+
+      pc = new RTCPeerConnection({ iceServers });
+      pc.onconnectionstatechange = () => status(`pc: ${pc.connectionState}`);
+      pc.ontrack = (ev) => {
+        $('remoteVideo').srcObject = ev.streams[0];
+      };
+      pc.onicecandidate = (ev) => {
+        if (ev.candidate && ws.readyState === 1) {
+          ws.send(JSON.stringify({
+            type: 'ice',
+            candidate: ev.candidate.candidate,
+            sdpMid: ev.candidate.sdpMid,
+            sdpMLineIndex: ev.candidate.sdpMLineIndex
+          }));
+        }
+      };
+
+      ws.onopen = () => status('ws: open (waiting for offer)');
+      ws.onclose = () => status('ws: closed');
+      ws.onerror = () => status('ws: error');
+      ws.onmessage = async (ev) => {
+        const msg = JSON.parse(ev.data);
+        if (msg.type === 'offer') {
+          await pc.setRemoteDescription({ type: 'offer', sdp: msg.sdp });
+          const answer = await pc.createAnswer();
+          await pc.setLocalDescription(answer);
+          ws.send(JSON.stringify({ type: 'answer', sdp: answer.sdp }));
+          status('sent answer');
+        } else if (msg.type === 'ice') {
+          try {
+            await pc.addIceCandidate({
+              candidate: msg.candidate,
+              sdpMid: msg.sdpMid,
+              sdpMLineIndex: msg.sdpMLineIndex
+            });
+          } catch (e) {
+            console.warn('addIceCandidate failed', e);
+          }
+        }
+      };
+    };
+  </script>
+</body>
+</html>

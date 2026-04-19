@@ -1,0 +1,15 @@
+# Copy this file to `local.properties` and fill in your values.
+# `local.properties` is gitignored — never commit real keys.
+
+sdk.dir=/absolute/path/to/Android/sdk
+
+# GitHub PAT (classic) with `read:packages` scope — required to pull
+# the Meta Wearables DAT SDK from GitHub Packages.
+github_token=ghp_your_personal_access_token
+
+# From Meta for Developers → your app → Device Access Toolkit.
+META_WEARABLES_APP_ID=your-app-id
+META_WEARABLES_CLIENT_TOKEN=your-client-token
+META_WEARABLES_DAT_VERSION=0.6.0
+META_WEARABLES_ANALYTICS_OPT_OUT=false
+META_WEARABLES_ENABLE_MOCK_DEVICE=false

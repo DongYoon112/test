@@ -1,0 +1,22 @@
+# Android
+android/.gradle/
+android/.idea/
+android/build/
+android/app/build/
+android/local.properties
+android/*.iml
+android/app/*.iml
+android/.cxx/
+android/captures/
+
+# Node
+signaling-server/node_modules/
+signaling-server/npm-debug.log*
+
+# OS / editor
+.DS_Store
+*.swp
+.vscode/
+
+# Env
+.env
