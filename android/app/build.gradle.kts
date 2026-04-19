@@ -15,6 +15,11 @@ val metaDatVersion: String = localProps.getProperty("META_WEARABLES_DAT_VERSION"
 val metaAnalyticsOptOut: String = localProps.getProperty("META_WEARABLES_ANALYTICS_OPT_OUT") ?: "false"
 val metaEnableMockDevice: String = localProps.getProperty("META_WEARABLES_ENABLE_MOCK_DEVICE") ?: "false"
 
+val openaiKey: String = localProps.getProperty("OPENAI_API_KEY") ?: ""
+val openaiVisionModel: String = localProps.getProperty("OPENAI_VISION_MODEL") ?: "gpt-4o-mini"
+val elevenLabsKey: String = localProps.getProperty("ELEVENLABS_API_KEY") ?: ""
+val elevenLabsSttModel: String = localProps.getProperty("ELEVENLABS_STT_MODEL_ID") ?: "scribe_v1"
+
 android {
     namespace = "com.aegisvision.medbud"
     compileSdk = 35
@@ -33,6 +38,11 @@ android {
         buildConfigField("String", "META_DAT_VERSION", "\"$metaDatVersion\"")
         buildConfigField("boolean", "META_ANALYTICS_OPT_OUT", metaAnalyticsOptOut)
         buildConfigField("boolean", "META_ENABLE_MOCK_DEVICE", metaEnableMockDevice)
+
+        buildConfigField("String", "OPENAI_API_KEY", "\"$openaiKey\"")
+        buildConfigField("String", "OPENAI_VISION_MODEL", "\"$openaiVisionModel\"")
+        buildConfigField("String", "ELEVENLABS_API_KEY", "\"$elevenLabsKey\"")
+        buildConfigField("String", "ELEVENLABS_STT_MODEL_ID", "\"$elevenLabsSttModel\"")
     }
 
     buildFeatures {
@@ -53,8 +63,12 @@ dependencies {
     implementation("com.google.android.material:material:1.12.0")
     implementation("androidx.constraintlayout:constraintlayout:2.1.4")
     implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.8.2")
+    implementation("androidx.lifecycle:lifecycle-viewmodel-ktx:2.8.2")
     implementation("androidx.activity:activity-ktx:1.9.2")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0")
+
+    // HTTP client for OpenAI + ElevenLabs calls from within the app.
+    implementation("com.squareup.okhttp3:okhttp:4.12.0")
 
     // WebRTC
     implementation("io.getstream:stream-webrtc-android:1.1.3")

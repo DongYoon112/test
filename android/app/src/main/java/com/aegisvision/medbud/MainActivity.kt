@@ -1,8 +1,11 @@
 package com.aegisvision.medbud
 
 import android.Manifest
+import android.content.Intent
 import android.os.Bundle
 import android.util.Log
+import android.view.Menu
+import android.view.MenuItem
 import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts.RequestMultiplePermissions
 import androidx.appcompat.app.AppCompatActivity
@@ -10,6 +13,8 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.repeatOnLifecycle
 import com.aegisvision.medbud.databinding.ActivityMainBinding
+import com.aegisvision.medbud.perception.PerceptionDebugActivity
+import com.aegisvision.medbud.perception.PerceptionHolder
 import com.meta.wearable.dat.camera.types.StreamSessionState
 import com.meta.wearable.dat.core.Wearables
 import com.meta.wearable.dat.core.types.Permission
@@ -24,6 +29,7 @@ class MainActivity : AppCompatActivity() {
     companion object {
         private const val TAG = "MainActivity"
         private const val SIGNALING_URL = "ws://192.168.4.58:8080"
+        private const val MENU_PERCEPTION = 1
 
         // Android permissions required for DAT to operate. BLUETOOTH is legacy
         // (pre-S) and ignored on newer OS; BLUETOOTH_CONNECT is the S+ version.
@@ -119,7 +125,12 @@ class MainActivity : AppCompatActivity() {
         webRtcClient.initPeerConnectionFactory()
         webRtcClient.createPeerConnection()
 
-        videoStreamManager = VideoStreamManager(webRtcClient, binding.previewRenderer)
+        videoStreamManager = VideoStreamManager(
+            webRtc = webRtcClient,
+            preview = binding.previewRenderer,
+            onPerceptionJpeg = { jpeg -> PerceptionHolder.repository.submitFrame(jpeg) },
+            perceptionIntervalMs = 1000L,
+        )
 
         glasses = GlassesConnectionManager(
             onVideoFrame = { frame -> videoStreamManager.onCameraFrame(frame) },
@@ -210,6 +221,20 @@ class MainActivity : AppCompatActivity() {
         runOnUiThread {
             binding.streamButton.isEnabled = isRegistered && hasActiveDevice && datInitialized
         }
+    }
+
+    override fun onCreateOptionsMenu(menu: Menu): Boolean {
+        menu.add(Menu.NONE, MENU_PERCEPTION, 0, "Perception")
+            .setShowAsAction(MenuItem.SHOW_AS_ACTION_ALWAYS)
+        return true
+    }
+
+    override fun onOptionsItemSelected(item: MenuItem): Boolean {
+        if (item.itemId == MENU_PERCEPTION) {
+            startActivity(Intent(this, PerceptionDebugActivity::class.java))
+            return true
+        }
+        return super.onOptionsItemSelected(item)
     }
 
     override fun onDestroy() {

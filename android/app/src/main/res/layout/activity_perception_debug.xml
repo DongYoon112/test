@@ -1,0 +1,85 @@
+<?xml version="1.0" encoding="utf-8"?>
+<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:fillViewport="true">
+
+    <LinearLayout
+        android:orientation="vertical"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:padding="16dp">
+
+        <TextView
+            android:id="@+id/summaryText"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:textSize="16sp"
+            android:textStyle="bold"
+            android:paddingBottom="12dp"
+            android:text="Awaiting first frame." />
+
+        <TextView
+            android:id="@+id/bleedingText"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:fontFamily="monospace"
+            android:textSize="13sp"
+            android:paddingBottom="8dp" />
+
+        <TextView
+            android:id="@+id/breathingText"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:fontFamily="monospace"
+            android:textSize="13sp"
+            android:paddingBottom="8dp" />
+
+        <TextView
+            android:id="@+id/consciousText"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:fontFamily="monospace"
+            android:textSize="13sp"
+            android:paddingBottom="8dp" />
+
+        <TextView
+            android:id="@+id/personText"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:fontFamily="monospace"
+            android:textSize="13sp"
+            android:paddingBottom="8dp" />
+
+        <TextView
+            android:id="@+id/listsText"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:fontFamily="monospace"
+            android:textSize="13sp"
+            android:paddingBottom="8dp" />
+
+        <TextView
+            android:id="@+id/speechLabel"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Recent speech:"
+            android:textStyle="bold"
+            android:paddingTop="12dp" />
+
+        <TextView
+            android:id="@+id/speechText"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:fontFamily="monospace"
+            android:textSize="13sp"
+            android:paddingBottom="12dp" />
+
+        <TextView
+            android:id="@+id/footerText"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:textSize="11sp"
+            android:alpha="0.7" />
+    </LinearLayout>
+</ScrollView>

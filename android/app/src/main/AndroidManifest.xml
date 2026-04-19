@@ -40,5 +40,11 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+
+        <activity
+            android:name=".perception.PerceptionDebugActivity"
+            android:exported="false"
+            android:label="Perception (debug)"
+            android:parentActivityName=".MainActivity" />
     </application>
 </manifest>

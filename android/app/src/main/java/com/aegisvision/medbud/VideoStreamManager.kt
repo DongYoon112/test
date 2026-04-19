@@ -1,6 +1,7 @@
 package com.aegisvision.medbud
 
 import android.util.Log
+import com.aegisvision.medbud.perception.VisionAnalysisManager
 import com.meta.wearable.dat.camera.types.VideoFrame
 import org.webrtc.JavaI420Buffer
 import org.webrtc.SurfaceViewRenderer
@@ -16,11 +17,15 @@ import org.webrtc.VideoFrame as RtcVideoFrame
  */
 class VideoStreamManager(
     private val webRtc: WebRTCClient,
-    private val preview: SurfaceViewRenderer
+    private val preview: SurfaceViewRenderer,
+    /** Called with a fresh JPEG ~once per [perceptionIntervalMs] (null disables). */
+    private val onPerceptionJpeg: ((ByteArray) -> Unit)? = null,
+    private val perceptionIntervalMs: Long = 1000L,
 ) {
 
     private var frameCount = 0
     private var lastLogMs = 0L
+    private var lastPerceptionMs = 0L
 
     fun onCameraFrame(frame: VideoFrame) {
         frameCount++
@@ -69,6 +74,23 @@ class VideoStreamManager(
             // Push a copy to WebRTC for the browser stream.
             webRtc.pushVideoFrame(rtcFrame)
             rtcFrame.release()
+
+            // Optional perception tap: at most one JPEG every
+            // `perceptionIntervalMs`, converted off the planes we already
+            // have so we don't double-copy the frame.
+            val sink = onPerceptionJpeg
+            if (sink != null && now - lastPerceptionMs >= perceptionIntervalMs) {
+                lastPerceptionMs = now
+                try {
+                    val yArr = bufferToBytes(yView, w * h)
+                    val uArr = bufferToBytes(uView, (w / 2) * (h / 2))
+                    val vArr = bufferToBytes(vView, (w / 2) * (h / 2))
+                    val jpeg = VisionAnalysisManager.encodeI420ToJpeg(yArr, uArr, vArr, w, h)
+                    sink(jpeg)
+                } catch (t: Throwable) {
+                    Log.w(TAG, "perception JPEG encode failed", t)
+                }
+            }
         } catch (t: Throwable) {
             Log.e(TAG, "Failed to push frame", t)
         }
@@ -79,6 +101,15 @@ class VideoStreamManager(
         dup.position(src.position() + offset)
         dup.limit(src.position() + offset + length)
         return dup.slice()
+    }
+
+    /** Pull [size] bytes from position 0 of a slice into a fresh ByteArray. */
+    private fun bufferToBytes(src: ByteBuffer, size: Int): ByteArray {
+        val dup = src.duplicate()
+        dup.position(0)
+        val out = ByteArray(size)
+        dup.get(out, 0, size)
+        return out
     }
 
     private fun copyPlane(
