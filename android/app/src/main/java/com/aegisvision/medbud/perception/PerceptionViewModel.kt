@@ -3,6 +3,9 @@ package com.aegisvision.medbud.perception
 import android.app.Application
 import androidx.lifecycle.AndroidViewModel
 import com.aegisvision.medbud.BuildConfig
+import com.aegisvision.medbud.action.ActionPlanState
+import com.aegisvision.medbud.clarification.ClarificationState
+import com.aegisvision.medbud.decision.DecisionState
 import kotlinx.coroutines.flow.StateFlow
 
 /**
@@ -16,6 +19,17 @@ import kotlinx.coroutines.flow.StateFlow
 class PerceptionViewModel(application: Application) : AndroidViewModel(application) {
 
     val state: StateFlow<PerceptionState> = PerceptionHolder.repository.state
+
+    /** Phase 2.1 triage output, derived from [state] by [TriageEngine]. */
+    val decisionState: StateFlow<DecisionState> = PerceptionHolder.repository.decisionState
+
+    /** Phase 2.2 clarification output — best next camera/question prompt. */
+    val clarificationState: StateFlow<ClarificationState> =
+        PerceptionHolder.repository.clarificationState
+
+    /** Phase 2.3 action plan — chosen branch + ordered internal steps. */
+    val actionPlanState: StateFlow<ActionPlanState> =
+        PerceptionHolder.repository.actionPlanState
 
     fun submitFrame(jpeg: ByteArray) = PerceptionHolder.repository.submitFrame(jpeg)
 

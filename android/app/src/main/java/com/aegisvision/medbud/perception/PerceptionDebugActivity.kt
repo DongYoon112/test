@@ -8,6 +8,9 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.repeatOnLifecycle
 import com.aegisvision.medbud.R
+import com.aegisvision.medbud.action.ActionPlanState
+import com.aegisvision.medbud.clarification.ClarificationState
+import com.aegisvision.medbud.decision.DecisionState
 import kotlinx.coroutines.launch
 import java.util.Locale
 
@@ -33,8 +36,43 @@ class PerceptionDebugActivity : AppCompatActivity() {
         val speech = findViewById<TextView>(R.id.speechText)
         val footer = findViewById<TextView>(R.id.footerText)
 
+        val dPrimary = findViewById<TextView>(R.id.decisionPrimaryText)
+        val dSecondary = findViewById<TextView>(R.id.decisionSecondaryText)
+        val dFocus = findViewById<TextView>(R.id.decisionFocusText)
+        val dBlockers = findViewById<TextView>(R.id.decisionBlockersText)
+        val dMissing = findViewById<TextView>(R.id.decisionMissingText)
+        val dRationale = findViewById<TextView>(R.id.decisionRationaleText)
+
+        val cNeed = findViewById<TextView>(R.id.clarNeedText)
+        val cCands = findViewById<TextView>(R.id.clarCandidatesText)
+        val cPrompt = findViewById<TextView>(R.id.clarPromptText)
+        val cGain = findViewById<TextView>(R.id.clarGainText)
+        val cRationale = findViewById<TextView>(R.id.clarRationaleText)
+
+        val aStatus = findViewById<TextView>(R.id.planStatusText)
+        val aSecondary = findViewById<TextView>(R.id.planSecondaryText)
+        val aBlockers = findViewById<TextView>(R.id.planBlockersText)
+        val aSafety = findViewById<TextView>(R.id.planSafetyText)
+        val aSteps = findViewById<TextView>(R.id.planStepsText)
+        val aRationale = findViewById<TextView>(R.id.planRationaleText)
+
         lifecycleScope.launch {
             repeatOnLifecycle(Lifecycle.State.STARTED) {
+                launch {
+                    viewModel.decisionState.collect { d -> renderDecision(
+                        d, dPrimary, dSecondary, dFocus, dBlockers, dMissing, dRationale,
+                    ) }
+                }
+                launch {
+                    viewModel.clarificationState.collect { c -> renderClarification(
+                        c, cNeed, cCands, cPrompt, cGain, cRationale,
+                    ) }
+                }
+                launch {
+                    viewModel.actionPlanState.collect { a -> renderActionPlan(
+                        a, aStatus, aSecondary, aBlockers, aSafety, aSteps, aRationale,
+                    ) }
+                }
                 viewModel.state.collect { s ->
                     summary.text = s.summary
                     bleeding.text = formatField("bleeding", s.bleeding)
@@ -57,6 +95,88 @@ class PerceptionDebugActivity : AppCompatActivity() {
                 }
             }
         }
+    }
+
+    private fun renderDecision(
+        d: DecisionState,
+        primary: TextView,
+        secondary: TextView,
+        focus: TextView,
+        blockers: TextView,
+        missing: TextView,
+        rationale: TextView,
+    ) {
+        primary.text = String.format(
+            Locale.US,
+            "primary:   %-22s urgency=%-8s conf=%.2f",
+            d.primaryPriority.name.lowercase(Locale.US),
+            d.urgency.name.lowercase(Locale.US),
+            d.confidence,
+        )
+        secondary.text = "secondary: " + if (d.secondaryPriorities.isEmpty()) "—"
+            else d.secondaryPriorities.joinToString(", ") { it.name.lowercase(Locale.US) }
+        focus.text = "next_focus: " + d.nextFocus
+        blockers.text = "blockers:  " + if (d.blockers.isEmpty()) "—" else d.blockers.joinToString("; ")
+        missing.text = "missing:   " + if (d.missingInfo.isEmpty()) "—" else d.missingInfo.joinToString("; ")
+        rationale.text = d.rationale
+    }
+
+    private fun renderClarification(
+        c: ClarificationState,
+        need: TextView,
+        cands: TextView,
+        prompt: TextView,
+        gain: TextView,
+        rationale: TextView,
+    ) {
+        need.text = String.format(
+            Locale.US,
+            "need:      %-30s prio=%.2f",
+            c.primaryClarificationNeed.type.name.lowercase(Locale.US),
+            c.primaryClarificationNeed.priority,
+        )
+        cands.text = "others:    " + if (c.candidateNeeds.isEmpty()) "—"
+            else c.candidateNeeds.joinToString(", ") { it.type.name.lowercase(Locale.US) }
+        prompt.text = if (c.recommendedPrompt.mode == com.aegisvision.medbud.clarification.PromptMode.NONE)
+            "prompt:    (passive — continue monitoring)"
+        else String.format(
+            Locale.US,
+            "prompt:    [%s] \"%s\"",
+            c.recommendedPrompt.mode.name.lowercase(Locale.US),
+            c.recommendedPrompt.promptText,
+        )
+        gain.text = String.format(
+            Locale.US,
+            "est_gain:  %.2f   tag=%s",
+            c.confidenceGainEstimate,
+            c.recommendedPrompt.shortLabel,
+        )
+        rationale.text = c.rationale
+    }
+
+    private fun renderActionPlan(
+        a: ActionPlanState,
+        status: TextView,
+        secondary: TextView,
+        blockers: TextView,
+        safety: TextView,
+        steps: TextView,
+        rationale: TextView,
+    ) {
+        status.text = String.format(
+            Locale.US,
+            "status:    %-20s primary=%-22s readiness=%.2f",
+            a.status.name.lowercase(Locale.US),
+            a.primaryAction.name.lowercase(Locale.US),
+            a.readiness,
+        )
+        secondary.text = "secondary: " + if (a.secondaryActions.isEmpty()) "—"
+            else a.secondaryActions.joinToString(", ") { it.name.lowercase(Locale.US) }
+        blockers.text = "blockers:  " + if (a.blockers.isEmpty()) "—" else a.blockers.joinToString("; ")
+        safety.text = "safety:    " + if (a.safetyFlags.isEmpty()) "—" else a.safetyFlags.joinToString("; ")
+        steps.text = "steps:     " + if (a.plannedSteps.isEmpty()) "—"
+            else a.plannedSteps.joinToString(" → ") { it.instructionKey }
+        rationale.text = a.rationale
     }
 
     private fun formatField(name: String, f: FieldState): String =

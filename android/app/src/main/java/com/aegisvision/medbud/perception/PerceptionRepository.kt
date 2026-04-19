@@ -1,6 +1,12 @@
 package com.aegisvision.medbud.perception
 
 import android.util.Log
+import com.aegisvision.medbud.action.ActionPlanState
+import com.aegisvision.medbud.action.ActionPlanner
+import com.aegisvision.medbud.clarification.ClarificationEngine
+import com.aegisvision.medbud.clarification.ClarificationState
+import com.aegisvision.medbud.decision.DecisionState
+import com.aegisvision.medbud.decision.TriageEngine
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -8,8 +14,11 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -46,6 +55,52 @@ class PerceptionRepository(
 
     private val _state = MutableStateFlow(PerceptionState.empty())
     val state: StateFlow<PerceptionState> = _state.asStateFlow()
+
+    /**
+     * Phase 2.1 decision layer. Derived (pure) from [state] via [TriageEngine].
+     * StateFlow so UI / downstream agents can collect without recomputing.
+     */
+    val decisionState: StateFlow<DecisionState> = state
+        .map { TriageEngine.evaluate(it) }
+        .stateIn(
+            scope = scope,
+            started = SharingStarted.Eagerly,
+            initialValue = DecisionState.initial(),
+        )
+
+    /**
+     * Phase 2.2 clarification layer. Each perception update produces a fresh
+     * clarification recommendation. Re-evaluates Triage inside the map so the
+     * two derived states are always consistent with each other — avoids
+     * "combine" flicker when both decision and clarification update together.
+     */
+    val clarificationState: StateFlow<ClarificationState> = state
+        .map { perception ->
+            val decision = TriageEngine.evaluate(perception)
+            ClarificationEngine.evaluate(perception, decision)
+        }
+        .stateIn(
+            scope = scope,
+            started = SharingStarted.Eagerly,
+            initialValue = ClarificationState.initial(),
+        )
+
+    /**
+     * Phase 2.3 action planner. Derived from perception → decision →
+     * clarification → plan, evaluated inside a single `map` so every
+     * downstream StateFlow is internally consistent with every other.
+     */
+    val actionPlanState: StateFlow<ActionPlanState> = state
+        .map { perception ->
+            val decision = TriageEngine.evaluate(perception)
+            val clarification = ClarificationEngine.evaluate(perception, decision)
+            ActionPlanner.evaluate(perception, decision, clarification)
+        }
+        .stateIn(
+            scope = scope,
+            started = SharingStarted.Eagerly,
+            initialValue = ActionPlanState.initial(),
+        )
 
     // ---- lifecycle --------------------------------------------------------
 

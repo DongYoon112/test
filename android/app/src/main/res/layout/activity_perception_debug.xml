@@ -75,6 +75,190 @@
             android:textSize="13sp"
             android:paddingBottom="12dp" />
 
+        <View
+            android:layout_width="match_parent"
+            android:layout_height="1dp"
+            android:background="#444"
+            android:layout_marginTop="12dp"
+            android:layout_marginBottom="12dp" />
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Triage decision"
+            android:textStyle="bold"
+            android:textSize="14sp"
+            android:paddingBottom="6dp" />
+
+        <TextView
+            android:id="@+id/decisionPrimaryText"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:fontFamily="monospace"
+            android:textSize="13sp"
+            android:paddingBottom="4dp" />
+
+        <TextView
+            android:id="@+id/decisionSecondaryText"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:fontFamily="monospace"
+            android:textSize="13sp"
+            android:paddingBottom="4dp" />
+
+        <TextView
+            android:id="@+id/decisionFocusText"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:fontFamily="monospace"
+            android:textSize="13sp"
+            android:paddingBottom="4dp" />
+
+        <TextView
+            android:id="@+id/decisionBlockersText"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:fontFamily="monospace"
+            android:textSize="12sp"
+            android:paddingBottom="4dp" />
+
+        <TextView
+            android:id="@+id/decisionMissingText"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:fontFamily="monospace"
+            android:textSize="12sp"
+            android:paddingBottom="4dp" />
+
+        <TextView
+            android:id="@+id/decisionRationaleText"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:textSize="12sp"
+            android:fontStyle="italic"
+            android:alpha="0.85"
+            android:paddingBottom="12dp" />
+
+        <View
+            android:layout_width="match_parent"
+            android:layout_height="1dp"
+            android:background="#444"
+            android:layout_marginTop="4dp"
+            android:layout_marginBottom="12dp" />
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Clarification"
+            android:textStyle="bold"
+            android:textSize="14sp"
+            android:paddingBottom="6dp" />
+
+        <TextView
+            android:id="@+id/clarNeedText"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:fontFamily="monospace"
+            android:textSize="13sp"
+            android:paddingBottom="4dp" />
+
+        <TextView
+            android:id="@+id/clarCandidatesText"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:fontFamily="monospace"
+            android:textSize="12sp"
+            android:paddingBottom="4dp" />
+
+        <TextView
+            android:id="@+id/clarPromptText"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:fontFamily="monospace"
+            android:textSize="13sp"
+            android:paddingBottom="4dp" />
+
+        <TextView
+            android:id="@+id/clarGainText"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:fontFamily="monospace"
+            android:textSize="12sp"
+            android:paddingBottom="4dp" />
+
+        <TextView
+            android:id="@+id/clarRationaleText"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:textSize="12sp"
+            android:fontStyle="italic"
+            android:alpha="0.85"
+            android:paddingBottom="12dp" />
+
+        <View
+            android:layout_width="match_parent"
+            android:layout_height="1dp"
+            android:background="#444"
+            android:layout_marginTop="4dp"
+            android:layout_marginBottom="12dp" />
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Action plan"
+            android:textStyle="bold"
+            android:textSize="14sp"
+            android:paddingBottom="6dp" />
+
+        <TextView
+            android:id="@+id/planStatusText"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:fontFamily="monospace"
+            android:textSize="13sp"
+            android:paddingBottom="4dp" />
+
+        <TextView
+            android:id="@+id/planSecondaryText"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:fontFamily="monospace"
+            android:textSize="12sp"
+            android:paddingBottom="4dp" />
+
+        <TextView
+            android:id="@+id/planBlockersText"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:fontFamily="monospace"
+            android:textSize="12sp"
+            android:paddingBottom="4dp" />
+
+        <TextView
+            android:id="@+id/planSafetyText"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:fontFamily="monospace"
+            android:textSize="12sp"
+            android:paddingBottom="4dp" />
+
+        <TextView
+            android:id="@+id/planStepsText"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:fontFamily="monospace"
+            android:textSize="12sp"
+            android:paddingBottom="4dp" />
+
+        <TextView
+            android:id="@+id/planRationaleText"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:textSize="12sp"
+            android:fontStyle="italic"
+            android:alpha="0.85"
+            android:paddingBottom="12dp" />
+
         <TextView
             android:id="@+id/footerText"
             android:layout_width="match_parent"
