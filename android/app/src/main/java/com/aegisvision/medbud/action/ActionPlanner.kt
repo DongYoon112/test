@@ -213,7 +213,10 @@ object ActionPlanner {
         }
 
         // 5. Decision confidence too low to act.
-        if (d.confidence < 0.30) {
+        //    Relaxed to 0.15 so speech-only critical signals ("he's not breathing")
+        //    still produce an actionable plan. Adaptation engine will push the
+        //    delivery into SIMPLIFIED mode so the app stays cautious in words.
+        if (d.confidence < 0.15) {
             blockers += "decision confidence ${"%.2f".format(d.confidence)} below action threshold"
             return Triple(ActionPlanStatus.NOT_READY, blockers, d.confidence)
         }

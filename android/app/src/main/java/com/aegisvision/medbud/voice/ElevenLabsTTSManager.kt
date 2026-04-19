@@ -2,7 +2,10 @@ package com.aegisvision.medbud.voice
 
 import android.content.Context
 import android.media.AudioAttributes
+import android.media.AudioDeviceInfo
+import android.media.AudioManager
 import android.media.MediaPlayer
+import android.os.Build
 import android.util.Log
 import com.aegisvision.medbud.decision.UrgencyLevel
 import kotlinx.coroutines.Dispatchers
@@ -36,6 +39,13 @@ class ElevenLabsTTSManager(
     private val voiceId: String,
     private val modelId: String,
 ) {
+    /**
+     * Optional hooks to pause/resume a continuous mic listener while TTS
+     * is playing. Prevents the app from transcribing its own voice.
+     */
+    @Volatile var onPlaybackStart: (() -> Unit)? = null
+    @Volatile var onPlaybackEnd: (() -> Unit)? = null
+
     private val http = OkHttpClient.Builder()
         .connectTimeout(5, TimeUnit.SECONDS)
         .readTimeout(20, TimeUnit.SECONDS)
@@ -79,6 +89,8 @@ class ElevenLabsTTSManager(
         interrupt()
         val audio = withContext(Dispatchers.IO) { fetchAudio(text, urgency) } ?: return
 
+        // Pause any continuous mic listener so the AI doesn't hear itself.
+        onPlaybackStart?.invoke()
         withContext(Dispatchers.Main) {
             suspendCancellableCoroutine<Unit> { cont ->
                 val tmp = File.createTempFile("tts_", ".mp3", context.cacheDir)
@@ -90,6 +102,7 @@ class ElevenLabsTTSManager(
                     if (cont.isActive) cont.resume(Unit)
                     return@suspendCancellableCoroutine
                 }
+                Log.i(TAG, "TTS received ${audio.size} bytes; starting MediaPlayer")
 
                 val mp = MediaPlayer()
                 val done = java.util.concurrent.atomic.AtomicBoolean(false)
@@ -99,27 +112,58 @@ class ElevenLabsTTSManager(
                     tmp.delete()
                     if (player === mp) player = null
                     if (currentFile === tmp) currentFile = null
+                    onPlaybackEnd?.invoke()
                     if (cont.isActive) cont.resume(Unit)
                 }
                 try {
+                    // USAGE_MEDIA routes through the A2DP/BLE-audio path, which
+                    // is what the Ray-Ban Meta speakers register as.
+                    // USAGE_ASSISTANT was going to the voice-communication stream
+                    // and skipping the glasses entirely.
                     mp.setAudioAttributes(
                         AudioAttributes.Builder()
                             .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
-                            .setUsage(AudioAttributes.USAGE_ASSISTANT)
+                            .setUsage(AudioAttributes.USAGE_MEDIA)
+                            .setFlags(AudioAttributes.FLAG_AUDIBILITY_ENFORCED)
                             .build()
                     )
                     mp.setDataSource(tmp.absolutePath)
-                    mp.setOnPreparedListener { it.start() }
-                    mp.setOnCompletionListener { finish() }
+                    mp.setVolume(1.0f, 1.0f)
+                    // If a Bluetooth output (A2DP / BLE audio / hearing aid) is
+                    // available, pin playback to it so TTS comes out of the
+                    // glasses even if the phone's default route drifts.
+                    pickBluetoothOutput()?.let { dev ->
+                        try {
+                            if (mp.setPreferredDevice(dev)) {
+                                Log.i(TAG, "TTS → preferred device: ${dev.productName} (type=${dev.type})")
+                            } else {
+                                Log.w(TAG, "setPreferredDevice returned false for ${dev.productName}")
+                            }
+                        } catch (t: Throwable) {
+                            Log.w(TAG, "setPreferredDevice threw", t)
+                        }
+                    } ?: Log.i(TAG, "No Bluetooth output device found — using phone default")
+                    mp.setOnPreparedListener {
+                        Log.i(TAG, "MediaPlayer prepared; starting playback (duration=${it.duration}ms)")
+                        it.start()
+                    }
+                    mp.setOnCompletionListener {
+                        Log.i(TAG, "MediaPlayer playback complete")
+                        finish()
+                    }
                     mp.setOnErrorListener { _, what, extra ->
-                        Log.w(TAG, "MediaPlayer error $what/$extra")
+                        Log.e(TAG, "MediaPlayer onError: what=$what extra=$extra — audio will NOT be heard")
                         finish(); true
+                    }
+                    mp.setOnInfoListener { _, what, extra ->
+                        Log.i(TAG, "MediaPlayer onInfo: what=$what extra=$extra")
+                        false
                     }
                     mp.prepareAsync()
                     player = mp
                     currentFile = tmp
                 } catch (t: Throwable) {
-                    Log.w(TAG, "playback setup failed", t)
+                    Log.e(TAG, "playback setup failed", t)
                     finish()
                 }
 
@@ -168,15 +212,18 @@ class ElevenLabsTTSManager(
             .build()
 
         return try {
+            val t0 = System.currentTimeMillis()
             http.newCall(req).execute().use { resp ->
                 if (!resp.isSuccessful) {
-                    Log.w(TAG, "TTS http ${resp.code}: ${resp.body?.string()?.take(200)}")
+                    Log.e(TAG, "TTS http ${resp.code}: ${resp.body?.string()?.take(200)}")
                     return null
                 }
-                resp.body?.bytes()
+                val bytes = resp.body?.bytes()
+                Log.i(TAG, "TTS http 200 in ${System.currentTimeMillis() - t0}ms, ${bytes?.size ?: 0} bytes")
+                bytes
             }
         } catch (t: Throwable) {
-            Log.w(TAG, "TTS transport error", t)
+            Log.e(TAG, "TTS transport error", t)
             null
         }
     }
@@ -221,6 +268,44 @@ class ElevenLabsTTSManager(
             try { mp.release() } catch (_: Throwable) {}
             tmp.delete()
         }
+    }
+
+    // ---- audio routing ----------------------------------------------------
+
+    /**
+     * Prefer routing TTS playback to a Bluetooth audio output (the Ray-Ban
+     * Meta speakers, a BT headset, etc.) over the phone's built-in speaker.
+     * Returns the first BT output device we find, or null if none present.
+     */
+    private fun pickBluetoothOutput(): AudioDeviceInfo? {
+        val am = context.getSystemService(Context.AUDIO_SERVICE) as? AudioManager ?: return null
+        val outputs = try {
+            am.getDevices(AudioManager.GET_DEVICES_OUTPUTS)
+        } catch (t: Throwable) {
+            Log.w(TAG, "getDevices failed", t); return null
+        }
+        val btTypes = buildSet {
+            add(AudioDeviceInfo.TYPE_BLUETOOTH_A2DP)
+            add(AudioDeviceInfo.TYPE_BLUETOOTH_SCO)
+            add(AudioDeviceInfo.TYPE_HEARING_AID)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                add(AudioDeviceInfo.TYPE_BLE_HEADSET)
+                add(AudioDeviceInfo.TYPE_BLE_SPEAKER)
+                add(AudioDeviceInfo.TYPE_BLE_BROADCAST)
+            }
+        }
+        // Prefer A2DP (classic BT music), then BLE audio, then anything else BT.
+        val ordered = outputs.sortedBy {
+            when (it.type) {
+                AudioDeviceInfo.TYPE_BLUETOOTH_A2DP -> 0
+                AudioDeviceInfo.TYPE_BLE_HEADSET -> 1
+                AudioDeviceInfo.TYPE_BLE_SPEAKER -> 2
+                AudioDeviceInfo.TYPE_HEARING_AID -> 3
+                AudioDeviceInfo.TYPE_BLUETOOTH_SCO -> 4
+                else -> 99
+            }
+        }
+        return ordered.firstOrNull { it.type in btTypes }
     }
 
     // ---- voice settings ---------------------------------------------------

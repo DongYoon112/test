@@ -104,6 +104,9 @@ class MainActivity : AppCompatActivity() {
         binding.streamButton.setOnClickListener {
             if (streaming) stopStream() else checkPermThenStartStream()
         }
+        binding.askAiButton.setOnClickListener {
+            VoiceHolder.guidance?.triggerManualWake()
+        }
     }
 
     override fun onStart() {
@@ -143,7 +146,17 @@ class MainActivity : AppCompatActivity() {
             onVideoFrame = { frame -> videoStreamManager.onCameraFrame(frame) },
             onStreamState = { s ->
                 runOnUiThread { binding.statusText.text = "Stream: $s" }
-                if (s == StreamSessionState.CLOSED) runOnUiThread { resetStreamButton() }
+                // Start the continuous mic ONLY after DAT is actively streaming,
+                // so AudioRecord doesn't renegotiate BT audio routing during the
+                // DAT session handshake. Stop it the moment the stream closes.
+                when (s) {
+                    StreamSessionState.STREAMING -> VoiceHolder.startListening()
+                    StreamSessionState.CLOSED -> {
+                        VoiceHolder.stopListening()
+                        runOnUiThread { resetStreamButton() }
+                    }
+                    else -> {}
+                }
             },
             onError = { msg ->
                 Log.e(TAG, msg)
@@ -202,6 +215,9 @@ class MainActivity : AppCompatActivity() {
 
     private fun doStartStream() {
         Log.i(TAG, "doStartStream() — calling glasses.startStream()")
+        // Fresh session: wipe guidance state so we don't repeat whatever
+        // step the last run ended on.
+        VoiceHolder.guidance?.reset()
         glasses.startStream()
         // Kick off an offer in case the viewer is already connected.
         webRtcClient.createOffer { offer -> signaling.sendOffer(offer) }
@@ -211,6 +227,8 @@ class MainActivity : AppCompatActivity() {
 
     private fun stopStream() {
         glasses.stopStream()
+        VoiceHolder.stopListening()
+        VoiceHolder.guidance?.reset()
         resetStreamButton()
     }
 

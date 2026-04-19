@@ -31,6 +31,65 @@ import java.nio.ByteOrder
 class AudioCaptureManager(private val context: Context) {
 
     /**
+     * Continuously records audio and emits WAV-wrapped chunks of
+     * [chunkMs] milliseconds each. Runs until the coroutine is cancelled.
+     * Holds the mic open between chunks — no per-chunk setup gap.
+     *
+     * Returns early if [Manifest.permission.RECORD_AUDIO] isn't granted.
+     */
+    @SuppressLint("MissingPermission")
+    suspend fun streamWav(
+        chunkMs: Long,
+        onChunk: suspend (ByteArray) -> Unit,
+    ) = withContext(Dispatchers.IO) {
+        if (!hasRecordPermission()) {
+            Log.w(TAG, "RECORD_AUDIO not granted; streamWav no-op")
+            return@withContext
+        }
+        val minBuf = AudioRecord.getMinBufferSize(SAMPLE_RATE, CHANNEL_CFG, ENCODING)
+        if (minBuf == AudioRecord.ERROR || minBuf == AudioRecord.ERROR_BAD_VALUE) {
+            Log.w(TAG, "streamWav: getMinBufferSize failed"); return@withContext
+        }
+        val bufSize = maxOf(minBuf, 4096)
+        val record = try {
+            AudioRecord(MediaRecorder.AudioSource.MIC, SAMPLE_RATE, CHANNEL_CFG, ENCODING, bufSize)
+        } catch (t: Throwable) {
+            Log.w(TAG, "streamWav: AudioRecord init threw", t); return@withContext
+        }
+        if (record.state != AudioRecord.STATE_INITIALIZED) {
+            Log.w(TAG, "streamWav: AudioRecord not initialised")
+            try { record.release() } catch (_: Throwable) {}
+            return@withContext
+        }
+
+        val bytesPerChunk = SAMPLE_RATE * 2 * (chunkMs / 1000).toInt()  // 16-bit mono
+        val pcm = ByteArrayOutputStream(bytesPerChunk)
+        val tmp = ByteArray(bufSize)
+        try {
+            record.startRecording()
+            Log.i(TAG, "streamWav started, chunkMs=$chunkMs")
+            while (currentCoroutineContext().isActive) {
+                val n = record.read(tmp, 0, tmp.size)
+                if (n > 0) pcm.write(tmp, 0, n)
+                else if (n < 0) break
+                if (pcm.size() >= bytesPerChunk) {
+                    val wav = wrapWav(pcm.toByteArray())
+                    pcm.reset()
+                    try { onChunk(wav) } catch (t: Throwable) {
+                        Log.w(TAG, "onChunk threw", t)
+                    }
+                }
+            }
+        } catch (t: Throwable) {
+            Log.w(TAG, "streamWav loop error", t)
+        } finally {
+            try { record.stop() } catch (_: Throwable) {}
+            try { record.release() } catch (_: Throwable) {}
+            Log.i(TAG, "streamWav stopped")
+        }
+    }
+
+    /**
      * Record for [durationMs] and return a WAV-wrapped byte array.
      * Cancelling the coroutine stops recording immediately and returns
      * whatever was captured up to that point.

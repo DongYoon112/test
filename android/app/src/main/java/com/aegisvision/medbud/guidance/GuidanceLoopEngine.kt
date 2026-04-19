@@ -8,6 +8,7 @@ import com.aegisvision.medbud.clarification.ClarificationState
 import com.aegisvision.medbud.decision.DecisionState
 import com.aegisvision.medbud.decision.UrgencyLevel
 import com.aegisvision.medbud.perception.PerceptionRepository
+import com.aegisvision.medbud.perception.PerceptionState
 import com.aegisvision.medbud.perception.nowSec
 import com.aegisvision.medbud.voice.ElevenLabsTTSManager
 import com.aegisvision.medbud.voice.InstructionLevel
@@ -60,6 +61,7 @@ class GuidanceLoopEngine(
     @Volatile private var stepIndex: Int = 0
     @Volatile private var retryCount: Int = 0
     @Volatile private var escalation: EscalationLevel = EscalationLevel.NONE
+    @Volatile private var manualWakeActive: Boolean = false
 
     // -------------------------------------------------------------- lifecycle
 
@@ -75,6 +77,75 @@ class GuidanceLoopEngine(
                     onUpdate(plan, decision, clarification)
                 }
         }
+        // Always-on mic drives BOTH fusion and step progression. A user
+        // utterance at ANY time (between cycles, while AI idle, etc.) can
+        // advance / escalate — no more waiting for a listen window.
+        scope.launch {
+            listener.transcripts.collect { r ->
+                if (r.rawTranscript.isNotEmpty()) {
+                    repo.submitTranscript(r.rawTranscript)
+                    Log.i(TAG, "auto-fused: [${r.response.name}] \"${r.rawTranscript.take(80)}\"")
+                }
+                handleContinuousUtterance(r)
+            }
+        }
+    }
+
+    /**
+     * Drive step transitions from any utterance, regardless of whether
+     * a cycle is "listening". Coordinates with the active cycle so we
+     * don't double-advance when the cycle was about to do it anyway.
+     */
+    private fun handleContinuousUtterance(r: RealtimeResponseListener.Result) {
+        val plan = repo.actionPlanState.value
+        if (plan.status == ActionPlanStatus.NOT_READY ||
+            plan.status == ActionPlanStatus.MONITOR_ONLY) return
+        val step = currentStep(plan) ?: return
+        val feedback = decide(step, r.response)
+
+        // Ignore no-ops so silence / unclear doesn't churn the adaptation
+        // engine or force re-speaks.
+        if (r.response == UserResponseType.NO_RESPONSE ||
+            r.response == UserResponseType.UNCLEAR ||
+            r.response == UserResponseType.DONT_KNOW ||
+            r.response == UserResponseType.NO) return
+
+        Log.i(TAG, "utterance → ${feedback.action.name}: ${feedback.reason}")
+
+        adaptation.recordCycle(
+            CycleOutcome(
+                success = feedback.action == FeedbackAction.ADVANCE,
+                speedScore = speedScoreFor(r.response),
+                urgency = repo.decisionState.value.urgency,
+                escalation = escalation,
+                retryCount = retryCount,
+            )
+        )
+
+        pushState { it.copy(
+            timestampSec = nowSec(),
+            loopStatus = LoopStatus.DECIDING,
+            lastUserResponse = r.response,
+            rationale = "Utterance → ${feedback.action.name.lowercase()}: ${feedback.reason}",
+        ) }
+        apply(feedback, repo.decisionState.value.urgency)
+
+        // After an advancement (or escalation), speak the next instruction.
+        if (feedback.action == FeedbackAction.ADVANCE ||
+            feedback.action == FeedbackAction.REPEAT) {
+            triggerFreshCycle()
+        }
+    }
+
+    private fun triggerFreshCycle() {
+        currentCycle?.cancel()
+        currentCycle = scope.launch {
+            runCycle(
+                repo.actionPlanState.value,
+                repo.decisionState.value,
+                repo.clarificationState.value,
+            )
+        }
     }
 
     fun stop() {
@@ -82,6 +153,111 @@ class GuidanceLoopEngine(
         loopJob?.cancel()
         tts.interrupt()
         scope.cancel()
+    }
+
+    /**
+     * Wipe all per-session state so a fresh Start Stream begins from
+     * step zero with a clean retry/escalation record. Does NOT touch the
+     * perception repo — frames decay naturally over `maxFrameAgeSec`.
+     * Called from MainActivity on both stop and re-start.
+     */
+    fun reset() {
+        Log.i(TAG, "guidance reset()")
+        currentCycle?.cancel()
+        currentCycle = null
+        tts.interrupt()
+
+        lastPlanId = ""
+        lastUrgency = UrgencyLevel.LOW
+        stepIndex = 0
+        retryCount = 0
+        escalation = EscalationLevel.NONE
+        manualWakeActive = false
+
+        voice.resetSteps()
+        _state.value = GuidanceLoopState.initial()
+    }
+
+    /**
+     * Demo / manual trigger — the "wake" path.
+     *
+     * Forces the loop to speak a short greeting, open a listening window,
+     * and feed whatever the user says into the perception fusion engine.
+     * That transcript updates the tracker, which changes the plan, which
+     * then drives the normal speak/listen/decide loop on the next frame.
+     *
+     * Safe to call anytime: cancels any in-flight cycle first.
+     */
+    fun triggerManualWake() {
+        currentCycle?.cancel()
+        tts.interrupt()
+        Log.i(TAG, "triggerManualWake() — Ask AI button pressed")
+        currentCycle = scope.launch {
+            manualWakeActive = true
+            try {
+                // Always-speak greeting — irrespective of plan state.
+                val greet = "Hello. How can I help?"
+                voice.publishSpokenLine(greet, UrgencyLevel.MODERATE)
+                Log.i(TAG, "TTS wake greet: $greet")
+                try {
+                    tts.speakAwait(greet, UrgencyLevel.MODERATE)
+                } catch (t: Throwable) {
+                    Log.e(TAG, "wake greet speakAwait threw", t)
+                }
+
+                val result = try {
+                    listener.listenOnce(5_000L)
+                } catch (t: Throwable) {
+                    Log.w(TAG, "manual wake listen failed", t)
+                    RealtimeResponseListener.Result(UserResponseType.NO_RESPONSE, "")
+                }
+                Log.i(TAG, "wake heard: ${result.response.name} text=\"${result.rawTranscript.take(100)}\"")
+                if (result.rawTranscript.isNotEmpty()) {
+                    repo.submitTranscript(result.rawTranscript)
+                }
+
+                // Always speak a follow-up.
+                val immediate = immediateWakeResponse(result.response)
+                    ?: "Okay. Tell me more when you need me."
+                voice.publishSpokenLine(immediate, UrgencyLevel.HIGH)
+                Log.i(TAG, "TTS wake reply: $immediate")
+                try {
+                    tts.speakAwait(immediate, UrgencyLevel.HIGH)
+                } catch (t: Throwable) {
+                    Log.e(TAG, "wake reply speakAwait threw", t)
+                }
+
+                pushState { it.copy(
+                    timestampSec = nowSec(),
+                    loopStatus = LoopStatus.WAITING,
+                    lastUserResponse = result.response,
+                    rationale = "Manual wake; heard=${result.response.name.lowercase()} " +
+                        "text=\"${result.rawTranscript.take(60)}\".",
+                ) }
+            } catch (t: Throwable) {
+                Log.e(TAG, "triggerManualWake failed", t)
+            } finally {
+                manualWakeActive = false
+            }
+        }
+    }
+
+    /**
+     * Context-aware one-liner based on what the user just said. Keeps the
+     * manual-wake path responsive even when the planner is still digesting
+     * the transcript (< 1 s perception lag).
+     */
+    private fun immediateWakeResponse(resp: UserResponseType): String? = when (resp) {
+        UserResponseType.HELP_REQUEST -> "Call emergency services now."
+        UserResponseType.BREATHING_ABSENT -> "Point the camera at the chest."
+        UserResponseType.BREATHING_PRESENT -> "Keep watching. Check again in a moment."
+        UserResponseType.BLEEDING_WORSE -> "Show me where the bleeding is."
+        UserResponseType.BLEEDING_BETTER -> "Keep pressure on the wound."
+        UserResponseType.CANT_DO -> "Describe what you see."
+        UserResponseType.DONT_KNOW, UserResponseType.UNCLEAR ->
+            "Tell me what happened."
+        UserResponseType.NO_RESPONSE -> "I didn't hear you. Try again."
+        UserResponseType.YES, UserResponseType.NO, UserResponseType.DONE -> null
     }
 
     // -------------------------------------------------- inbound state change
@@ -96,9 +272,11 @@ class GuidanceLoopEngine(
         val urgencyUp = decision.urgency.ordinal > lastUrgency.ordinal
 
         // Silent / passive statuses — cancel any in-flight cycle and go idle.
+        // Exception: never cancel an in-flight manual-wake cycle; it's the
+        // user's explicit request and must always get a reply.
         val status = plan.status
         if (status == ActionPlanStatus.NOT_READY || status == ActionPlanStatus.MONITOR_ONLY) {
-            if (_state.value.loopStatus != LoopStatus.IDLE) {
+            if (_state.value.loopStatus != LoopStatus.IDLE && !manualWakeActive) {
                 currentCycle?.cancel()
                 tts.interrupt()
                 _state.value = _state.value.copy(
@@ -133,11 +311,55 @@ class GuidanceLoopEngine(
             }
         }
 
+        // Perception-driven auto-advance: if the camera already shows what
+        // the current step asks for, skip it. Prevents the loop from
+        // repeating "Show the bleeding" after the bleeding is on screen.
+        val perception = repo.state.value
+        var didAutoAdvance = false
+        while (stepIndex < plan.plannedSteps.size - 1) {
+            val step = plan.plannedSteps[stepIndex]
+            if (isStepCompleteByPerception(step.instructionKey, perception)) {
+                Log.i(TAG, "auto-advance: ${step.instructionKey} satisfied by perception")
+                stepIndex += 1
+                voice.advanceStep()
+                retryCount = 0
+                didAutoAdvance = true
+            } else break
+        }
+
         lastPlanId = planId
         lastUrgency = decision.urgency
 
         currentCycle = scope.launch {
             runCycle(plan, decision, clarification)
+        }
+    }
+
+    /**
+     * Observation-only steps that can be considered "done" once perception
+     * already sees what the step is asking about. Interventional steps
+     * (apply pressure, clear airway, etc.) are NOT in this list — those
+     * still require user confirmation.
+     */
+    private fun isStepCompleteByPerception(key: String, p: PerceptionState): Boolean {
+        val woundParts = setOf(
+            "arm", "leg", "hand", "foot", "chest", "abdomen", "head", "neck", "back",
+        )
+        return when (key) {
+            "locate_bleeding_source" ->
+                p.bleeding.confidence >= 0.35 &&
+                    p.bodyPartsVisible.any { it in woundParts }
+            "locate_chest" -> "chest" in p.bodyPartsVisible
+            "locate_patient", "scan_surroundings" ->
+                p.personVisible.value == "yes" && p.personVisible.confidence >= 0.4
+            "observe_patient", "confirm_patient_visible" ->
+                p.personVisible.value == "yes" && p.personVisible.confidence >= 0.5
+            "observe_airway" ->
+                "face" in p.bodyPartsVisible || "neck" in p.bodyPartsVisible
+            "assess_scene" -> p.framesInBuffer >= 3
+            "identify_hazard" -> p.sceneRisk.isNotEmpty()
+            "gather_more_frames" -> p.framesInBuffer >= 5
+            else -> false  // intervention/reassess steps need explicit confirmation
         }
     }
 
@@ -148,12 +370,7 @@ class GuidanceLoopEngine(
         decision: DecisionState,
         clarification: ClarificationState,
     ) {
-        val escalationAtStart = escalation
-        val retryCountAtStart = retryCount
-
-        // Phase 3.3 — let adaptation see the current context BEFORE we
-        // pick a phrase variant or listen window.
-        adaptation.reactToContext(decision.urgency, escalationAtStart, retryCountAtStart)
+        adaptation.reactToContext(decision.urgency, escalation, retryCount)
         val adapt = adaptation.state.value
 
         val step = currentStep(plan) ?: run {
@@ -166,7 +383,10 @@ class GuidanceLoopEngine(
             return
         }
 
-        // ---- SPEAK ----
+        // Speak once. No listen loop, no auto-repeat. State transitions
+        // (advance / escalate / handoff) are driven exclusively by the
+        // continuous transcript handler + perception auto-advance, so the
+        // AI doesn't nag the user once an instruction is delivered.
         pushState { it.copy(
             timestampSec = nowSec(),
             loopStatus = LoopStatus.SPEAKING,
@@ -177,53 +397,19 @@ class GuidanceLoopEngine(
             escalationLevel = escalation,
             rationale = "Speaking (${adapt.currentMode.name.lowercase()}) \"$toSpeak\".",
         ) }
+        voice.publishSpokenLine(toSpeak, urgency)
+        Log.i(TAG, "TTS speak (${urgency.name}): $toSpeak")
         try {
             tts.speakAwait(toSpeak, urgency)
         } catch (t: Throwable) {
             Log.w(TAG, "speakAwait failed", t)
         }
 
-        // ---- LISTEN ----
         pushState { it.copy(
             timestampSec = nowSec(),
-            loopStatus = LoopStatus.LISTENING,
-            rationale = "Listening (${adapt.pacing.name.lowercase()} pacing)…",
+            loopStatus = LoopStatus.WAITING,
+            rationale = "Waiting for user action on '${step.instructionKey}'.",
         ) }
-        val listenMs = adaptation.listenWindowMs()
-        val result = try {
-            listener.listenOnce(listenMs)
-        } catch (t: Throwable) {
-            Log.w(TAG, "listenOnce failed", t)
-            RealtimeResponseListener.Result(UserResponseType.NO_RESPONSE, "")
-        }
-
-        // Forward raw transcript to perception fusion so the tracker can
-        // learn from it (e.g. "he's breathing" tips the breathing field).
-        if (result.rawTranscript.isNotEmpty()) {
-            repo.submitTranscript(result.rawTranscript)
-        }
-
-        // ---- DECIDE ----
-        pushState { it.copy(
-            timestampSec = nowSec(),
-            loopStatus = LoopStatus.DECIDING,
-            lastUserResponse = result.response,
-        ) }
-        val feedback = decide(step, result.response)
-
-        // Phase 3.3 — record this cycle's outcome for adaptation.
-        val speedScore = speedScoreFor(result.response)
-        adaptation.recordCycle(
-            CycleOutcome(
-                success = feedback.action == FeedbackAction.ADVANCE,
-                speedScore = speedScore,
-                urgency = decision.urgency,
-                escalation = escalationAtStart,
-                retryCount = retryCountAtStart,
-            )
-        )
-
-        apply(feedback, decision.urgency)
     }
 
     /**

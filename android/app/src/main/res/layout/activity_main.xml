@@ -40,5 +40,12 @@
             android:layout_height="wrap_content"
             android:text="Start Stream"
             android:enabled="false" />
+
+        <Button
+            android:id="@+id/askAiButton"
+            android:layout_width="0dp"
+            android:layout_weight="1"
+            android:layout_height="wrap_content"
+            android:text="Ask AI" />
     </LinearLayout>
 </LinearLayout>

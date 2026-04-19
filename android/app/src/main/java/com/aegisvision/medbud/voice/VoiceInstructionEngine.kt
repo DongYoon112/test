@@ -88,6 +88,19 @@ class VoiceInstructionEngine(private val tts: ElevenLabsTTSManager) {
         currentStepIndex = 0
     }
 
+    /**
+     * Allow an external driver (Phase 3.2+ guidance loop) to publish what it
+     * just attempted to speak. Drives the Voice row in the debug UI so you
+     * can distinguish "loop fired but TTS failed" from "loop never fired".
+     */
+    fun publishSpokenLine(text: String, urgency: UrgencyLevel) {
+        _lastSpoken.value = SpokenLine(
+            text = text,
+            urgency = urgency,
+            timestampSec = nowSec(),
+        )
+    }
+
     // ---------------------------------------------------------- core
 
     private data class Snapshot(

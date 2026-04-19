@@ -1,6 +1,7 @@
 package com.aegisvision.medbud.voice
 
 import android.content.Context
+import android.util.Log
 import com.aegisvision.medbud.BuildConfig
 import com.aegisvision.medbud.guidance.AudioCaptureManager
 import com.aegisvision.medbud.guidance.GuidanceLoopEngine
@@ -20,11 +21,13 @@ object VoiceHolder {
     @Volatile private var _tts: ElevenLabsTTSManager? = null
     @Volatile private var _voice: VoiceInstructionEngine? = null
     @Volatile private var _guidance: GuidanceLoopEngine? = null
+    @Volatile private var _listener: RealtimeResponseListener? = null
 
     val tts: ElevenLabsTTSManager? get() = _tts
     /** Retained for backwards compatibility — step index + lastSpoken helper. */
     val engine: VoiceInstructionEngine? get() = _voice
     val guidance: GuidanceLoopEngine? get() = _guidance
+    val listener: RealtimeResponseListener? get() = _listener
 
     fun ensureStarted(context: Context) {
         if (_guidance != null) return
@@ -48,6 +51,16 @@ object VoiceHolder {
             )
             val audio = AudioCaptureManager(context.applicationContext)
             val listener = RealtimeResponseListener(audio = audio, stt = stt)
+            _listener = listener
+
+            // ChatGPT-style turn-taking: continuous mic, paused only while
+            // TTS is speaking so the app doesn't transcribe its own voice.
+            // NOTE: listener.start() is deliberately NOT called here — we
+            // defer it until after the DAT video stream is live. Starting
+            // AudioRecord during DAT session negotiation can cause Android
+            // to renegotiate the BT audio profile and kill the DAT handshake.
+            tts.onPlaybackStart = { listener.pause() }
+            tts.onPlaybackEnd = { listener.resume() }
 
             val loop = GuidanceLoopEngine(
                 tts = tts,
@@ -58,5 +71,19 @@ object VoiceHolder {
             loop.start()
             _guidance = loop
         }
+    }
+
+    /** Begin always-on voice capture. Call AFTER DAT stream is streaming. */
+    fun startListening() {
+        val l = _listener ?: return
+        Log.i("VoiceHolder", "starting continuous listener")
+        l.start()
+    }
+
+    /** Stop always-on voice capture. Call when the stream stops. */
+    fun stopListening() {
+        val l = _listener ?: return
+        Log.i("VoiceHolder", "stopping continuous listener")
+        l.stop()
     }
 }
