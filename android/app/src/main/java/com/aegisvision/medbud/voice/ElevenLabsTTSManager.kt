@@ -9,6 +9,7 @@ import android.os.Build
 import android.util.Log
 import com.aegisvision.medbud.decision.UrgencyLevel
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
 import okhttp3.MediaType.Companion.toMediaType
@@ -56,6 +57,15 @@ class ElevenLabsTTSManager(
     @Volatile private var currentFile: File? = null
 
     /**
+     * True from the moment MediaPlayer.start() fires until onCompletion
+     * or onError runs. When true, [interrupt] is suppressed so nothing
+     * can cut an utterance off mid-word. The speakAwait coroutine is
+     * also wrapped in NonCancellable while playing so cycle cancellation
+     * can't unwind through us either.
+     */
+    @Volatile private var isSpeaking: Boolean = false
+
+    /**
      * Synthesize [text] and play it back. Automatically interrupts any
      * speech that was already playing. Returns quickly — playback continues
      * in the background via [MediaPlayer] callbacks.
@@ -93,7 +103,12 @@ class ElevenLabsTTSManager(
         try {
         interrupt()
         val audio = withContext(Dispatchers.IO) { fetchAudio(text, urgency) } ?: return
-        withContext(Dispatchers.Main) {
+        // Wrap playback in NonCancellable so an outer cycle.cancel() can't
+        // unwind through a sentence in flight — once we start speaking,
+        // we finish. Explicit forceInterrupt() on shutdown still works
+        // because it stops the MediaPlayer directly via onError, which
+        // resumes the continuation normally.
+        withContext(NonCancellable + Dispatchers.Main) {
             suspendCancellableCoroutine<Unit> { cont ->
                 val tmp = File.createTempFile("tts_", ".mp3", context.cacheDir)
                 try {
@@ -110,6 +125,10 @@ class ElevenLabsTTSManager(
                 val done = java.util.concurrent.atomic.AtomicBoolean(false)
                 fun finish() {
                     if (done.getAndSet(true)) return
+                    // Speech is done — re-enable interrupt() for the next
+                    // cycle. Must flip BEFORE releasing the player so any
+                    // interrupt() racing with completion can clean up.
+                    isSpeaking = false
                     try { mp.release() } catch (_: Throwable) {}
                     tmp.delete()
                     if (player === mp) player = null
@@ -148,6 +167,10 @@ class ElevenLabsTTSManager(
                     } ?: Log.i(TAG, "No Bluetooth output device found — using phone default")
                     mp.setOnPreparedListener {
                         Log.i(TAG, "MediaPlayer prepared; starting playback (duration=${it.duration}ms)")
+                        // Flag playback as "in flight" BEFORE start() so
+                        // any interrupt() racing with start sees the flag
+                        // and backs off. Cleared in finish().
+                        isSpeaking = true
                         it.start()
                     }
                     mp.setOnCompletionListener {
@@ -181,8 +204,29 @@ class ElevenLabsTTSManager(
         }
     }
 
-    /** Stop any currently-playing audio and release resources. */
+    /**
+     * Stop any currently-playing audio and release resources. Suppressed
+     * while an utterance is actively playing — once speech starts, it
+     * finishes. Use [forceInterrupt] for shutdown / reset paths that must
+     * cut speech regardless.
+     */
     fun interrupt() {
+        if (isSpeaking) {
+            Log.i(TAG, "interrupt() suppressed — utterance in progress")
+            return
+        }
+        val p = player
+        player = null
+        try { p?.stop() } catch (_: Throwable) {}
+        try { p?.release() } catch (_: Throwable) {}
+        val f = currentFile
+        currentFile = null
+        try { f?.delete() } catch (_: Throwable) {}
+    }
+
+    /** Unconditional stop. Only call this on shutdown / reset paths. */
+    fun forceInterrupt() {
+        isSpeaking = false
         val p = player
         player = null
         try { p?.stop() } catch (_: Throwable) {}

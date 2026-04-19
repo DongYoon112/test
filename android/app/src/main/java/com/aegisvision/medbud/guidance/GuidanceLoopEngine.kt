@@ -241,7 +241,8 @@ class GuidanceLoopEngine(
         pendingCycleJob?.cancel()
         currentCycle?.cancel()
         loopJob?.cancel()
-        tts.interrupt()
+        // Shutdown — force-interrupt any in-flight speech.
+        tts.forceInterrupt()
         scope.cancel()
     }
 
@@ -265,7 +266,8 @@ class GuidanceLoopEngine(
             pendingCycleJob = null
             currentCycle?.cancel()
             currentCycle = null
-            tts.interrupt()
+            // User-driven stop — force-interrupt even mid-sentence.
+            tts.forceInterrupt()
         }
     }
 
@@ -275,7 +277,8 @@ class GuidanceLoopEngine(
         pendingCycleJob = null
         currentCycle?.cancel()
         currentCycle = null
-        tts.interrupt()
+        // User-driven reset — force-interrupt even mid-sentence.
+        tts.forceInterrupt()
 
         lastPlanId = ""
         lastUrgency = UrgencyLevel.LOW

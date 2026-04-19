@@ -22,6 +22,10 @@ val elevenLabsSttModel: String = localProps.getProperty("ELEVENLABS_STT_MODEL_ID
 val elevenLabsTtsVoice: String = localProps.getProperty("ELEVENLABS_TTS_VOICE_ID") ?: ""
 val elevenLabsTtsModel: String = localProps.getProperty("ELEVENLABS_TTS_MODEL_ID") ?: "eleven_flash_v2_5"
 
+val geminiKey: String = localProps.getProperty("GEMINI_API_KEY") ?: ""
+val geminiLiveModel: String = localProps.getProperty("GEMINI_LIVE_MODEL") ?: "gemini-2.0-flash-exp"
+val geminiLiveVoice: String = localProps.getProperty("GEMINI_LIVE_VOICE") ?: "Puck"
+
 android {
     namespace = "com.aegisvision.medbud"
     compileSdk = 35
@@ -47,6 +51,10 @@ android {
         buildConfigField("String", "ELEVENLABS_STT_MODEL_ID", "\"$elevenLabsSttModel\"")
         buildConfigField("String", "ELEVENLABS_TTS_VOICE_ID", "\"$elevenLabsTtsVoice\"")
         buildConfigField("String", "ELEVENLABS_TTS_MODEL", "\"$elevenLabsTtsModel\"")
+
+        buildConfigField("String", "GEMINI_API_KEY", "\"$geminiKey\"")
+        buildConfigField("String", "GEMINI_LIVE_MODEL", "\"$geminiLiveModel\"")
+        buildConfigField("String", "GEMINI_LIVE_VOICE", "\"$geminiLiveVoice\"")
     }
 
     buildFeatures {
