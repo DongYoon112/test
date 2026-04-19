@@ -10,6 +10,8 @@ import android.media.MediaRecorder
 import android.util.Log
 import androidx.core.content.ContextCompat
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.withContext
 import java.io.ByteArrayOutputStream
 import java.nio.ByteBuffer
@@ -68,7 +70,7 @@ class AudioCaptureManager(private val context: Context) {
                 if (n > 0) pcm.write(chunk, 0, n)
                 else if (n < 0) break
                 // Respect coroutine cancellation between reads.
-                if (!kotlinx.coroutines.currentCoroutineContext().isActive) break
+                if (!currentCoroutineContext().isActive) break
             }
         } catch (t: Throwable) {
             Log.w(TAG, "AudioRecord read error", t)

@@ -47,18 +47,22 @@ class GlassesConnectionManager(
      */
     fun startStream() {
         stopStream()
+        Log.i(TAG, "startStream() entry; creating session")
 
         Wearables.createSession(deviceSelector)
             .onSuccess { created ->
+                Log.i(TAG, "session created, calling start()")
                 session = created
                 created.start()
                 sessionStateJob = scope.launch {
                     created.state.collect { s ->
+                        Log.i(TAG, "session state=$s")
                         if (s == DeviceSessionState.STARTED) addStream(created)
                     }
                 }
             }
             .onFailure { err, _ ->
+                Log.e(TAG, "createSession failed: ${err.description}")
                 onError("createSession failed: ${err.description}")
             }
     }
@@ -83,6 +87,7 @@ class GlassesConnectionManager(
                 }
                 streamErrorJob = scope.launch {
                     added.errorStream.collect { e ->
+                        Log.e(TAG, "stream errorStream: ${e.description}")
                         onError("stream error: ${e.description}")
                     }
                 }
@@ -90,6 +95,7 @@ class GlassesConnectionManager(
                 added.start()
             }
             .onFailure { err, _ ->
+                Log.e(TAG, "addStream failed: ${err.description}")
                 onError("addStream failed: ${err.description}")
             }
     }

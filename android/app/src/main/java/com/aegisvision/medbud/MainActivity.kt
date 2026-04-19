@@ -32,14 +32,15 @@ class MainActivity : AppCompatActivity() {
         private const val SIGNALING_URL = "ws://192.168.4.58:8080"
         private const val MENU_PERCEPTION = 1
 
-        // Android permissions required for DAT to operate. BLUETOOTH is legacy
-        // (pre-S) and ignored on newer OS; BLUETOOTH_CONNECT is the S+ version.
+        // Only actually runtime-dangerous permissions go through the launcher.
+        // BLUETOOTH is legacy (maxSdkVersion=30 in manifest), INTERNET is a
+        // normal install-time permission — requesting either on API 31+ makes
+        // the launcher report them as denied even when the manifest grants
+        // them, which tripped the `allGranted` check here.
         private val REQUIRED_PERMS = arrayOf(
-            Manifest.permission.BLUETOOTH,
             Manifest.permission.BLUETOOTH_CONNECT,
             Manifest.permission.CAMERA,
             Manifest.permission.RECORD_AUDIO,
-            Manifest.permission.INTERNET
         )
     }
 
@@ -200,6 +201,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun doStartStream() {
+        Log.i(TAG, "doStartStream() — calling glasses.startStream()")
         glasses.startStream()
         // Kick off an offer in case the viewer is already connected.
         webRtcClient.createOffer { offer -> signaling.sendOffer(offer) }
