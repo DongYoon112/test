@@ -19,6 +19,8 @@ val openaiKey: String = localProps.getProperty("OPENAI_API_KEY") ?: ""
 val openaiVisionModel: String = localProps.getProperty("OPENAI_VISION_MODEL") ?: "gpt-4o-mini"
 val elevenLabsKey: String = localProps.getProperty("ELEVENLABS_API_KEY") ?: ""
 val elevenLabsSttModel: String = localProps.getProperty("ELEVENLABS_STT_MODEL_ID") ?: "scribe_v1"
+val elevenLabsTtsVoice: String = localProps.getProperty("ELEVENLABS_TTS_VOICE_ID") ?: ""
+val elevenLabsTtsModel: String = localProps.getProperty("ELEVENLABS_TTS_MODEL_ID") ?: "eleven_flash_v2_5"
 
 android {
     namespace = "com.aegisvision.medbud"
@@ -43,6 +45,8 @@ android {
         buildConfigField("String", "OPENAI_VISION_MODEL", "\"$openaiVisionModel\"")
         buildConfigField("String", "ELEVENLABS_API_KEY", "\"$elevenLabsKey\"")
         buildConfigField("String", "ELEVENLABS_STT_MODEL_ID", "\"$elevenLabsSttModel\"")
+        buildConfigField("String", "ELEVENLABS_TTS_VOICE_ID", "\"$elevenLabsTtsVoice\"")
+        buildConfigField("String", "ELEVENLABS_TTS_MODEL", "\"$elevenLabsTtsModel\"")
     }
 
     buildFeatures {

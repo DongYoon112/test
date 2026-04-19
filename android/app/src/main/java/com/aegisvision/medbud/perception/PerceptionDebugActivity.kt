@@ -11,6 +11,10 @@ import com.aegisvision.medbud.R
 import com.aegisvision.medbud.action.ActionPlanState
 import com.aegisvision.medbud.clarification.ClarificationState
 import com.aegisvision.medbud.decision.DecisionState
+import com.aegisvision.medbud.guidance.AdaptationState
+import com.aegisvision.medbud.guidance.GuidanceLoopState
+import com.aegisvision.medbud.voice.VoiceHolder
+import com.aegisvision.medbud.voice.VoiceInstructionEngine
 import kotlinx.coroutines.launch
 import java.util.Locale
 
@@ -56,6 +60,16 @@ class PerceptionDebugActivity : AppCompatActivity() {
         val aSteps = findViewById<TextView>(R.id.planStepsText)
         val aRationale = findViewById<TextView>(R.id.planRationaleText)
 
+        val voiceLastSpoken = findViewById<TextView>(R.id.voiceLastSpokenText)
+        val gStatus = findViewById<TextView>(R.id.guidanceStatusText)
+        val gDetail = findViewById<TextView>(R.id.guidanceDetailText)
+        val gRationale = findViewById<TextView>(R.id.guidanceRationaleText)
+        val aMode = findViewById<TextView>(R.id.adaptModeText)
+        val aMetrics = findViewById<TextView>(R.id.adaptMetricsText)
+
+        // Ensure the voice engine is running before we try to observe its flow.
+        VoiceHolder.ensureStarted(this)
+
         lifecycleScope.launch {
             repeatOnLifecycle(Lifecycle.State.STARTED) {
                 launch {
@@ -72,6 +86,21 @@ class PerceptionDebugActivity : AppCompatActivity() {
                     viewModel.actionPlanState.collect { a -> renderActionPlan(
                         a, aStatus, aSecondary, aBlockers, aSafety, aSteps, aRationale,
                     ) }
+                }
+                launch {
+                    VoiceHolder.engine?.lastSpoken?.collect { line ->
+                        renderVoice(line, voiceLastSpoken)
+                    }
+                }
+                launch {
+                    VoiceHolder.guidance?.state?.collect { g ->
+                        renderGuidance(g, gStatus, gDetail, gRationale)
+                    }
+                }
+                launch {
+                    VoiceHolder.guidance?.adaptation?.state?.collect { a ->
+                        renderAdaptation(a, aMode, aMetrics)
+                    }
                 }
                 viewModel.state.collect { s ->
                     summary.text = s.summary
@@ -177,6 +206,58 @@ class PerceptionDebugActivity : AppCompatActivity() {
         steps.text = "steps:     " + if (a.plannedSteps.isEmpty()) "—"
             else a.plannedSteps.joinToString(" → ") { it.instructionKey }
         rationale.text = a.rationale
+    }
+
+    private fun renderGuidance(
+        g: GuidanceLoopState,
+        status: TextView,
+        detail: TextView,
+        rationale: TextView,
+    ) {
+        status.text = String.format(
+            Locale.US,
+            "loop:      %-10s esc=%-9s step=%d  retry=%d",
+            g.loopStatus.name.lowercase(Locale.US),
+            g.escalationLevel.name.lowercase(Locale.US),
+            g.currentStepIndex,
+            g.retryCount,
+        )
+        detail.text = String.format(
+            Locale.US,
+            "lastResp:  %-20s  completion=%s  key=%s",
+            g.lastUserResponse.name.lowercase(Locale.US),
+            g.completionState.name.lowercase(Locale.US),
+            g.currentInstructionKey ?: "—",
+        )
+        rationale.text = g.rationale
+    }
+
+    private fun renderAdaptation(a: AdaptationState, modeView: TextView, metricsView: TextView) {
+        modeView.text = String.format(
+            Locale.US,
+            "adapt:     mode=%-12s level=%-7s pacing=%s",
+            a.currentMode.name.lowercase(Locale.US),
+            a.instructionComplexity.name.lowercase(Locale.US),
+            a.pacing.name.lowercase(Locale.US),
+        )
+        metricsView.text = String.format(
+            Locale.US,
+            "metrics:   reliability=%.2f  failureRate=%.2f  speed=%.2f",
+            a.userReliabilityScore, a.failureRate, a.responseSpeed,
+        )
+    }
+
+    private fun renderVoice(line: VoiceInstructionEngine.SpokenLine?, view: TextView) {
+        view.text = if (line == null) {
+            "(nothing spoken yet)"
+        } else {
+            String.format(
+                Locale.US,
+                "[%s] \"%s\"",
+                line.urgency.name.lowercase(Locale.US),
+                line.text,
+            )
+        }
     }
 
     private fun formatField(name: String, f: FieldState): String =

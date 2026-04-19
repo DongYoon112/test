@@ -15,6 +15,7 @@ import androidx.lifecycle.repeatOnLifecycle
 import com.aegisvision.medbud.databinding.ActivityMainBinding
 import com.aegisvision.medbud.perception.PerceptionDebugActivity
 import com.aegisvision.medbud.perception.PerceptionHolder
+import com.aegisvision.medbud.voice.VoiceHolder
 import com.meta.wearable.dat.camera.types.StreamSessionState
 import com.meta.wearable.dat.core.Wearables
 import com.meta.wearable.dat.core.types.Permission
@@ -37,6 +38,7 @@ class MainActivity : AppCompatActivity() {
             Manifest.permission.BLUETOOTH,
             Manifest.permission.BLUETOOTH_CONNECT,
             Manifest.permission.CAMERA,
+            Manifest.permission.RECORD_AUDIO,
             Manifest.permission.INTERNET
         )
     }
@@ -89,6 +91,10 @@ class MainActivity : AppCompatActivity() {
 
         initPipeline()
         observeWearablesState()
+
+        // Phase 3.1: start the voice delivery engine. Idempotent; safe to
+        // call every onCreate (e.g. after rotation).
+        VoiceHolder.ensureStarted(this)
 
         binding.connectButton.setOnClickListener {
             // Opens the Meta AI registration / consent UI.
