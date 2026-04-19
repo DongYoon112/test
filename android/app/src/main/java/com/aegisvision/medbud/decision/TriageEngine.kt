@@ -41,7 +41,26 @@ object TriageEngine {
 
         // Hard override: if perception is confident there's no person, we
         // cannot triage medical priorities; lock to NO_PERSON_DETECTED.
-        if (state.personVisible.value == "no" && state.personVisible.confidence >= 0.4) {
+        //
+        // EXCEPT: a close-up of a bleeding hand fills the frame and the VLM
+        // reports person_visible=no even though a limb is clearly on screen.
+        // We keep the previous state in those cases — a visible body part,
+        // an active bleeding/breathing/consciousness signal, or a recent
+        // spoken update all count as "person is still with us".
+        val hasBodyPart = state.bodyPartsVisible.isNotEmpty()
+        val hasAcuteSignal =
+            (state.bleeding.value !in setOf("unknown", "none") &&
+                state.bleeding.confidence >= 0.25) ||
+            (state.breathing.value != "unknown" &&
+                state.breathing.value != "normal" &&
+                state.breathing.confidence >= 0.25) ||
+            (state.conscious.value == "no" &&
+                state.conscious.confidence >= 0.25)
+
+        if (state.personVisible.value == "no" &&
+            state.personVisible.confidence >= 0.4 &&
+            !hasBodyPart &&
+            !hasAcuteSignal) {
             return DecisionState(
                 timestampSec = now,
                 primaryPriority = PriorityType.NO_PERSON_DETECTED,

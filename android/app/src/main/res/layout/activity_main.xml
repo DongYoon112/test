@@ -3,49 +3,148 @@
     android:orientation="vertical"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:padding="12dp"
+    android:background="@color/aegis_bg"
+    android:paddingStart="16dp"
+    android:paddingEnd="16dp"
+    android:paddingTop="20dp"
+    android:paddingBottom="16dp"
     android:fitsSystemWindows="true">
 
-    <TextView
-        android:id="@+id/statusText"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:text="Disconnected"
-        android:textSize="16sp"
-        android:padding="8dp" />
-
-    <org.webrtc.SurfaceViewRenderer
-        android:id="@+id/previewRenderer"
-        android:layout_width="match_parent"
-        android:layout_height="0dp"
-        android:layout_weight="1" />
-
+    <!-- Header: logo + wordmark + tagline -->
     <LinearLayout
         android:orientation="horizontal"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:paddingTop="8dp">
+        android:gravity="center_vertical">
+
+        <ImageView
+            android:layout_width="40dp"
+            android:layout_height="40dp"
+            android:src="@drawable/ic_aegis_logo"
+            android:contentDescription="@string/app_name" />
+
+        <LinearLayout
+            android:orientation="vertical"
+            android:layout_width="0dp"
+            android:layout_weight="1"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="12dp">
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="@string/app_name"
+                android:textColor="@color/aegis_text"
+                android:textSize="20sp"
+                android:textStyle="bold"
+                android:letterSpacing="0.02" />
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="@string/app_tagline"
+                android:textColor="@color/aegis_text_dim"
+                android:textSize="12sp" />
+        </LinearLayout>
+
+        <Button
+            android:id="@+id/logsButton"
+            android:layout_width="wrap_content"
+            android:layout_height="36dp"
+            android:minWidth="0dp"
+            android:paddingStart="14dp"
+            android:paddingEnd="14dp"
+            android:background="@drawable/btn_secondary"
+            android:stateListAnimator="@null"
+            android:text="@string/btn_logs"
+            android:textAllCaps="false"
+            android:textColor="@color/aegis_text"
+            android:textSize="12sp" />
+    </LinearLayout>
+
+    <!-- Status pill -->
+    <TextView
+        android:id="@+id/statusText"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="14dp"
+        android:background="@drawable/bg_status_pill"
+        android:paddingStart="14dp"
+        android:paddingEnd="14dp"
+        android:paddingTop="8dp"
+        android:paddingBottom="8dp"
+        android:text="@string/status_disconnected"
+        android:textColor="@color/aegis_text_dim"
+        android:textSize="13sp" />
+
+    <!-- Video card with detection overlay -->
+    <FrameLayout
+        android:id="@+id/videoCard"
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1"
+        android:layout_marginTop="16dp"
+        android:background="@drawable/bg_video_card"
+        android:clipToOutline="true">
+
+        <org.webrtc.SurfaceViewRenderer
+            android:id="@+id/previewRenderer"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent" />
+
+        <com.aegisvision.medbud.ui.DetectionOverlayView
+            android:id="@+id/detectionOverlay"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent" />
+    </FrameLayout>
+
+    <!-- Controls -->
+    <LinearLayout
+        android:orientation="horizontal"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="16dp"
+        android:weightSum="3">
 
         <Button
             android:id="@+id/connectButton"
             android:layout_width="0dp"
             android:layout_weight="1"
-            android:layout_height="wrap_content"
-            android:text="Connect Glasses" />
+            android:layout_height="52dp"
+            android:layout_marginEnd="8dp"
+            android:background="@drawable/btn_secondary"
+            android:stateListAnimator="@null"
+            android:text="@string/btn_connect"
+            android:textAllCaps="false"
+            android:textColor="@color/aegis_text"
+            android:textSize="14sp" />
 
         <Button
             android:id="@+id/streamButton"
             android:layout_width="0dp"
             android:layout_weight="1"
-            android:layout_height="wrap_content"
-            android:text="Start Stream"
-            android:enabled="false" />
+            android:layout_height="52dp"
+            android:layout_marginStart="4dp"
+            android:layout_marginEnd="4dp"
+            android:background="@drawable/btn_primary"
+            android:enabled="false"
+            android:stateListAnimator="@null"
+            android:text="@string/btn_start_stream"
+            android:textAllCaps="false"
+            android:textColor="#FFFFFF"
+            android:textSize="14sp" />
 
         <Button
             android:id="@+id/askAiButton"
             android:layout_width="0dp"
             android:layout_weight="1"
-            android:layout_height="wrap_content"
-            android:text="Ask AI" />
+            android:layout_height="52dp"
+            android:layout_marginStart="8dp"
+            android:background="@drawable/btn_secondary"
+            android:stateListAnimator="@null"
+            android:text="@string/btn_ask_ai"
+            android:textAllCaps="false"
+            android:textColor="@color/aegis_text"
+            android:textSize="14sp" />
     </LinearLayout>
 </LinearLayout>

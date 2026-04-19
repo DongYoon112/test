@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Aegis Vision logo — vector approximation. Red circle with a white
+     "aperture" sweep through the middle and a small inner pupil, matching
+     the reference PNG closely enough for launcher + header use. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+
+    <!-- Outer red disk. -->
+    <path
+        android:fillColor="#FF2E2E"
+        android:pathData="M54,8
+            A46,46 0 1,0 54,100
+            A46,46 0 1,0 54,8 Z" />
+
+    <!-- Horizontal white sweep carving the aperture. Two crescents that
+         interlace through the middle, leaving a red pupil. -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M18,54
+            C28,34 58,34 78,54
+            C64,46 46,48 38,58
+            C34,60 30,60 26,58
+            C22,56 20,55 18,54 Z" />
+
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M90,54
+            C80,74 50,74 30,54
+            C44,62 62,60 70,50
+            C74,48 78,48 82,50
+            C86,52 88,53 90,54 Z" />
+</vector>

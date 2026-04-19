@@ -107,6 +107,18 @@ class MainActivity : AppCompatActivity() {
         binding.askAiButton.setOnClickListener {
             VoiceHolder.guidance?.triggerManualWake()
         }
+        binding.logsButton.setOnClickListener {
+            startActivity(Intent(this, PerceptionDebugActivity::class.java))
+        }
+
+        // Pipe VLM detections into the on-stream overlay.
+        lifecycleScope.launch {
+            repeatOnLifecycle(Lifecycle.State.STARTED) {
+                PerceptionHolder.repository.detections.collect { list ->
+                    binding.detectionOverlay.setDetections(list)
+                }
+            }
+        }
     }
 
     override fun onStart() {
@@ -216,16 +228,20 @@ class MainActivity : AppCompatActivity() {
     private fun doStartStream() {
         Log.i(TAG, "doStartStream() — calling glasses.startStream()")
         // Fresh session: wipe guidance state so we don't repeat whatever
-        // step the last run ended on.
+        // step the last run ended on, then re-enable the speech path.
         VoiceHolder.guidance?.reset()
+        VoiceHolder.guidance?.setActive(true)
         glasses.startStream()
         // Kick off an offer in case the viewer is already connected.
         webRtcClient.createOffer { offer -> signaling.sendOffer(offer) }
         streaming = true
-        binding.streamButton.text = "Stop Stream"
+        binding.streamButton.text = getString(R.string.btn_stop_stream)
     }
 
     private fun stopStream() {
+        // Kill audio FIRST — interrupt any in-flight TTS and block any
+        // pending cycles from producing audio after the stream is down.
+        VoiceHolder.guidance?.setActive(false)
         glasses.stopStream()
         VoiceHolder.stopListening()
         VoiceHolder.guidance?.reset()
@@ -234,7 +250,7 @@ class MainActivity : AppCompatActivity() {
 
     private fun resetStreamButton() {
         streaming = false
-        binding.streamButton.text = "Start Stream"
+        binding.streamButton.text = getString(R.string.btn_start_stream)
     }
 
     private fun updateStatus(reg: String? = null) {

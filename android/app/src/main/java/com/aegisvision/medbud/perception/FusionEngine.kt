@@ -93,18 +93,20 @@ class FusionEngine(private val windowSeconds: Double = 30.0) {
                 FIELD_BREATHING, "normal", 1.0),
 
             // Consciousness
-            ScalarRule(Regex("""\b(unconscious|passed\s+out|knocked\s+out|out\s+cold|unresponsive)\b""", CASE_I),
+            ScalarRule(Regex("""\b(unconscious|passed\s+out|knocked\s+out|out\s+cold|unresponsive|not\s+responding|(they|he|she)'?s?\s+not\s+responding|won'?t\s+wake\s+up|doesn'?t\s+respond|didn'?t\s+respond|no\s+reaction|no\s+response)\b""", CASE_I),
                 FIELD_CONSCIOUS, "no", 2.0),
-            ScalarRule(Regex("""\b(he'?s\s+awake|she'?s\s+awake|responsive|alert|talking)\b""", CASE_I),
+            ScalarRule(Regex("""\b(he'?s\s+awake|she'?s\s+awake|they'?re\s+awake|responsive|alert|talking|(he|she|they)\s+responded|(they|he|she)'?s?\s+responding|opened\s+(his|her|their)\s+eyes|(he|she|they)\s+moved)\b""", CASE_I),
                 FIELD_CONSCIOUS, "yes", 1.5),
 
-            // Bleeding
-            ScalarRule(Regex("""\b(bleeding\s+(heavily|badly|a\s+lot)|lots?\s+of\s+blood|pouring\s+blood|hemorrhag)""", CASE_I),
+            // Bleeding — worse
+            ScalarRule(Regex("""\b(bleeding\s+(is\s+)?(heavily|badly|a\s+lot)|lots?\s+of\s+blood|pouring\s+blood|hemorrhag|keeps?\s+bleeding|won'?t\s+stop)""", CASE_I),
                 FIELD_BLEEDING, "heavy", 2.0),
             ScalarRule(Regex("""\b(a\s+little\s+blood|small\s+cut|minor\s+bleed)\b""", CASE_I),
                 FIELD_BLEEDING, "minor", 1.0),
-            ScalarRule(Regex("""\b(no\s+blood|not\s+bleeding)\b""", CASE_I),
-                FIELD_BLEEDING, "none", 1.0),
+            // Bleeding — resolved. Big weight so the user's confirmation
+            // outweighs lingering red pixels the VLM might still see.
+            ScalarRule(Regex("""\b(bleeding\s+(is\s+)?(stopped|slowed|slowing|less|under\s+control|better)|is\s+(slowing|stopping|stopped|slowed)(\s+now)?|stopped\s+bleeding|not\s+bleeding|no\s+blood|less\s+blood|slowing\s+down|it\s+stopped|it'?s\s+stopped|it'?s\s+stopping|it'?s\s+slowing|under\s+control)\b""", CASE_I),
+                FIELD_BLEEDING, "none", 2.5),
         )
 
         private val SCENE_RULES = listOf(

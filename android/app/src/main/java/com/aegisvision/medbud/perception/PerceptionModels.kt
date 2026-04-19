@@ -31,6 +31,21 @@ enum class Stability { STABLE, FLUCTUATING }
 enum class Trend { INCREASING, DECREASING, STABLE, UNKNOWN }
 enum class Source { VISION, SPEECH, FUSED }
 
+/**
+ * One bounding-box detection from the VLM. Coordinates are normalized
+ * [0,1] over the *frame as sent to the model* — translation to view
+ * pixels is the overlay's job.
+ */
+data class Detection(
+    val label: String,
+    val severity: String = "",
+    val confidence: Double = 0.0,
+    val x: Double,
+    val y: Double,
+    val w: Double,
+    val h: Double,
+)
+
 /** One VLM response, sanitised. Directly comparable to Python Observation. */
 data class ObservationFrame(
     val bleeding: String = "unknown",
@@ -41,6 +56,7 @@ data class ObservationFrame(
     val personVisible: String = "no",
     val confidence: Double = 0.0,
     val notes: String = "",
+    val detections: List<Detection> = emptyList(),
     /** Monotonic wall-clock seconds when this frame was produced. */
     val timestampSec: Double = nowSec()
 )

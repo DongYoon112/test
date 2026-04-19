@@ -10,7 +10,6 @@ import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.SharedFlow
-import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -19,19 +18,18 @@ import kotlinx.coroutines.withTimeoutOrNull
 /**
  * Always-on voice listener — ChatGPT-voice-chat style.
  *
- * Holds the mic open continuously. Every [chunkMs] of audio is transcribed
- * via ElevenLabs STT and parsed by [ResponseInterpreter]; every result is
- * emitted on [transcripts]. The guidance loop + the fusion engine both
- * subscribe, so the user can just talk whenever — no button presses, no
- * explicit "listen now" windows.
+ * Instead of fixed-duration chunks, this consumes VAD-gated utterances
+ * from [AdaptiveAudioPipeline]. Each utterance is already pre-rolled and
+ * trimmed at end-of-speech, so STT fires within ~600 ms of the user
+ * finishing a sentence instead of waiting out a 3.5 s clock.
  *
- * [pause] / [resume] are used by the TTS path to avoid the mic picking up
- * the AI's own voice during playback.
+ * [pause] / [resume] forward to the pipeline so the mic pipeline mutes
+ * itself while TTS is playing (the pipeline also honours a post-resume
+ * grace window to discard echo-tainted frames).
  */
 class RealtimeResponseListener(
-    private val audio: AudioCaptureManager,
+    private val pipeline: AdaptiveAudioPipeline,
     private val stt: STTManager,
-    private val chunkMs: Long = 3_500L,
 ) {
     data class Result(
         val response: UserResponseType,
@@ -48,9 +46,7 @@ class RealtimeResponseListener(
     private var streamJob: Job? = null
 
     @Volatile private var running = false
-    @Volatile private var paused = false
 
-    /** Start the always-on loop. Idempotent. */
     fun start() {
         if (running) return
         running = true
@@ -63,25 +59,19 @@ class RealtimeResponseListener(
         streamJob = null
     }
 
-    /** Mute the mic (e.g. while TTS is playing to avoid echo). */
     fun pause() {
-        if (!paused) {
-            paused = true
-            Log.i(TAG, "paused (TTS playing)")
-        }
+        pipeline.pause()
+        Log.i(TAG, "paused (TTS playing)")
     }
 
     fun resume() {
-        if (paused) {
-            paused = false
-            Log.i(TAG, "resumed")
-        }
+        pipeline.resume()
+        Log.i(TAG, "resumed")
     }
 
     /**
-     * Await the next transcript within [windowMs]. Guidance loop uses this
-     * instead of the old one-shot record; it just grabs whatever the
-     * always-on stream produces next.
+     * Await the next transcript within [windowMs]. The always-on pipeline
+     * will fill the buffer naturally as the user talks.
      */
     suspend fun listenOnce(windowMs: Long = 5_000L): Result = withContext(Dispatchers.Default) {
         withTimeoutOrNull(windowMs) { transcripts.first() }
@@ -93,28 +83,27 @@ class RealtimeResponseListener(
     private suspend fun loop() {
         while (running) {
             try {
-                audio.streamWav(chunkMs) { wav ->
-                    if (paused) return@streamWav
-                    // Transcribe in a separate coroutine so the recording
-                    // loop keeps pumping.
-                    scope.launch { processChunk(wav) }
+                pipeline.run { utterance ->
+                    // Transcribe in a separate coroutine so the pipeline
+                    // keeps accumulating the next utterance.
+                    scope.launch { processUtterance(utterance) }
                 }
             } catch (t: Throwable) {
-                Log.w(TAG, "streamWav errored — retrying in 1s", t)
+                Log.w(TAG, "pipeline errored — retrying in 1s", t)
             }
-            if (running) delay(1_000L)   // e.g. permission wasn't granted yet
+            if (running) delay(1_000L)
         }
     }
 
-    private suspend fun processChunk(wav: ByteArray) {
+    private suspend fun processUtterance(utterance: AdaptiveAudioPipeline.Utterance) {
         val text = try {
-            stt.transcribe(wav, contentType = "audio/wav")?.trim().orEmpty()
+            stt.transcribe(utterance.wav, contentType = "audio/wav")?.trim().orEmpty()
         } catch (t: Throwable) {
             Log.w(TAG, "STT error", t); return
         }
         if (text.isEmpty()) return
         val resp = ResponseInterpreter.parse(text)
-        Log.i(TAG, "heard: [${resp.name}] \"$text\"")
+        Log.i(TAG, "heard [${resp.name}] (path=${utterance.path}) \"$text\"")
         _transcripts.tryEmit(Result(resp, text))
     }
 

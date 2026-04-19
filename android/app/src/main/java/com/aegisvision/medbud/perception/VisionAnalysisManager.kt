@@ -126,6 +126,7 @@ class VisionAnalysisManager(
 
         val confidence = raw.optDouble("confidence", 0.0).coerceIn(0.0, 1.0)
         val notes = raw.optString("notes", "").take(200)
+        val detections = parseDetections(raw.optJSONArray("detections"))
 
         return ObservationFrame(
             bleeding = pick("bleeding", Vocab.BLEEDING, "unknown"),
@@ -136,13 +137,45 @@ class VisionAnalysisManager(
             personVisible = pick("person_visible", Vocab.PERSON_VISIBLE, "no"),
             confidence = confidence,
             notes = notes,
+            detections = detections,
         )
+    }
+
+    /**
+     * Parse and clamp bbox detections. Any entry with missing/invalid
+     * coordinates is dropped — partial garbage from the model is better
+     * ignored than drawn in the wrong place.
+     */
+    private fun parseDetections(arr: JSONArray?): List<Detection> {
+        if (arr == null || arr.length() == 0) return emptyList()
+        val out = ArrayList<Detection>(arr.length())
+        for (i in 0 until arr.length()) {
+            val o = arr.optJSONObject(i) ?: continue
+            val label = o.optString("label", "").trim()
+            if (label.isEmpty()) continue
+            val bbox = o.optJSONArray("bbox") ?: continue
+            if (bbox.length() < 4) continue
+            val x = bbox.optDouble(0, -1.0)
+            val y = bbox.optDouble(1, -1.0)
+            val w = bbox.optDouble(2, -1.0)
+            val h = bbox.optDouble(3, -1.0)
+            if (x < 0.0 || y < 0.0 || w <= 0.0 || h <= 0.0) continue
+            if (x > 1.0 || y > 1.0 || w > 1.0 || h > 1.0) continue
+            out += Detection(
+                label = label.take(32),
+                severity = o.optString("severity", "").take(16),
+                confidence = o.optDouble("confidence", 0.0).coerceIn(0.0, 1.0),
+                x = x, y = y, w = w, h = h,
+            )
+        }
+        return out.take(MAX_DETECTIONS)
     }
 
     companion object {
         private const val TAG = "VisionAnalysis"
         private const val OPENAI_URL = "https://api.openai.com/v1/chat/completions"
         private val JSON = "application/json; charset=utf-8".toMediaType()
+        private const val MAX_DETECTIONS = 8
 
         /**
          * Encode I420 planes (as delivered by DAT) to a JPEG byte array.
@@ -189,7 +222,9 @@ Return STRICT JSON — no prose, no markdown fences — matching exactly this sc
   "scene_risk":         [ string, ... ],
   "person_visible":     "yes" | "no",
   "confidence":         number between 0.0 and 1.0,
-  "notes":              string under 200 characters
+  "notes":              string under 200 characters,
+  "detections":         [ { "label": string, "severity": string, "confidence": number,
+                            "bbox": [x, y, w, h] }, ... ]
 }
 
 Field rules:
@@ -201,6 +236,7 @@ Field rules:
 - "person_visible": yes if a human body other than the wearer's own hand is in frame; if no, all medical fields must be "unknown" and arrays empty.
 - "confidence": overall certainty about this frame; lower for blurry/dark/ambiguous.
 - "notes": one short sentence of what is visually evident; do not speculate.
+- "detections": one entry per visually-salient item in frame. label = short tag ("bleeding", "hand", "face", "fire", "person", ...). severity is optional ("heavy"/"minor" for bleeding; otherwise empty). bbox = [x, y, w, h] normalized to [0,1], top-left origin. Emit at most 6 entries; omit entirely if nothing is visible.
 
 Hard rules:
 1. When in doubt, use "unknown" or empty arrays. Never guess.

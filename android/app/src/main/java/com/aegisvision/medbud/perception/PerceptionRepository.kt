@@ -56,6 +56,10 @@ class PerceptionRepository(
     private val _state = MutableStateFlow(PerceptionState.empty())
     val state: StateFlow<PerceptionState> = _state.asStateFlow()
 
+    /** Latest per-frame bounding-box detections from the VLM. */
+    private val _detections = MutableStateFlow<List<Detection>>(emptyList())
+    val detections: StateFlow<List<Detection>> = _detections.asStateFlow()
+
     /**
      * Phase 2.1 decision layer. Derived (pure) from [state] via [TriageEngine].
      * StateFlow so UI / downstream agents can collect without recomputing.
@@ -171,6 +175,7 @@ class PerceptionRepository(
                 applyScene = { r, w -> tracker.applySceneBoost(r, w) },
             )
             tracker.addFrame(obs)
+            _detections.value = obs.detections
             val snap = tracker.snapshot()
             val summary = summarise(snap)
             _state.value = PerceptionState(

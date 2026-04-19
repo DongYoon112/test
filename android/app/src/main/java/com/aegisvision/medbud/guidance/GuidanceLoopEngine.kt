@@ -4,6 +4,7 @@ import android.util.Log
 import com.aegisvision.medbud.action.ActionPlanState
 import com.aegisvision.medbud.action.ActionPlanStatus
 import com.aegisvision.medbud.action.ActionStep
+import com.aegisvision.medbud.action.ActionType
 import com.aegisvision.medbud.clarification.ClarificationState
 import com.aegisvision.medbud.decision.DecisionState
 import com.aegisvision.medbud.decision.UrgencyLevel
@@ -19,6 +20,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -62,6 +64,38 @@ class GuidanceLoopEngine(
     @Volatile private var retryCount: Int = 0
     @Volatile private var escalation: EscalationLevel = EscalationLevel.NONE
     @Volatile private var manualWakeActive: Boolean = false
+    @Volatile private var planCompleted: Boolean = false
+
+    // When false, the loop ignores state updates, utterances, and pending
+    // cycles — nothing speaks. Flipped by setActive() from MainActivity
+    // around the DAT stream's lifecycle so audio can't leak out after the
+    // user pressed "Stop Stream".
+    @Volatile private var active: Boolean = false
+
+    // Latched once a critical patient-state utterance triggers the CPR /
+    // 911 handoff. Unlike planCompleted, this survives plan-identity
+    // changes — we don't want to fall back to "Point the camera at the
+    // chest" five seconds after telling the user to start chest
+    // compressions. Cleared only by reset() or an explicit "responsive"
+    // or "breathing" confirmation from the user.
+    @Volatile private var handoffLatched: Boolean = false
+
+    // Last step we've actually spoken aloud in the current plan. Prevents
+    // re-speaking the same instruction every time an unrelated perception
+    // field twitches and re-emits the plan state.
+    @Volatile private var lastSpokenStepIndex: Int = -1
+    @Volatile private var lastSpokenEscalation: EscalationLevel = EscalationLevel.NONE
+
+    // Debounce job for cycle launches. The VLM pipeline lands a burst of
+    // state updates (perception → decision → clarification → plan) within
+    // a few hundred ms; without a debounce, each one cancels the previous
+    // TTS and you get clipped / overlapping speech.
+    @Volatile private var pendingCycleJob: Job? = null
+
+    // When the most recent utterance actually started playing. Used to
+    // enforce a minimum protected speaking window before a state-driven
+    // relaunch can interrupt.
+    @Volatile private var lastSpeakStartMs: Long = 0L
 
     // -------------------------------------------------------------- lifecycle
 
@@ -97,9 +131,14 @@ class GuidanceLoopEngine(
      * don't double-advance when the cycle was about to do it anyway.
      */
     private fun handleContinuousUtterance(r: RealtimeResponseListener.Result) {
+        if (!active) return
         val plan = repo.actionPlanState.value
+        // LOCATE_PATIENT is treated as silent: no step prompts, no
+        // advancement-on-utterance. We just keep listening until a real
+        // medical plan emerges.
         if (plan.status == ActionPlanStatus.NOT_READY ||
-            plan.status == ActionPlanStatus.MONITOR_ONLY) return
+            plan.status == ActionPlanStatus.MONITOR_ONLY ||
+            plan.primaryAction == ActionType.LOCATE_PATIENT) return
         val step = currentStep(plan) ?: return
         val feedback = decide(step, r.response)
 
@@ -128,6 +167,52 @@ class GuidanceLoopEngine(
             lastUserResponse = r.response,
             rationale = "Utterance → ${feedback.action.name.lowercase()}: ${feedback.reason}",
         ) }
+
+        // A "resolution" utterance short-circuits to the plan's ending from
+        // any step, not just the last one. If the user already knows the
+        // bleeding stopped / patient is breathing / etc., there's no value
+        // in walking them through the remaining reassess steps.
+        //
+        // Critical patient-state cues ("not breathing", "unresponsive") are
+        // plan-agnostic — the transcript hasn't hit the VLM pipeline yet, so
+        // `plan.primaryAction` may still reflect stale priorities. Route
+        // those straight to a CPR / 911 handoff regardless of the plan.
+        val lastIndex = plan.plannedSteps.lastIndex
+        val critical = criticalResolution(r.response)
+        val resolution = critical ?: resolutionFor(plan.primaryAction, r.response)
+        val isTerminal = feedback.action == FeedbackAction.ADVANCE &&
+            (stepIndex >= lastIndex || resolution != null)
+        if (isTerminal) {
+            planCompleted = true
+            if (critical != null) handoffLatched = true
+            // Recovery utterances (breathing/responsive confirmed) actively
+            // clear a prior handoff latch so the loop can resume normal
+            // guidance after a false-alarm.
+            if (r.response == UserResponseType.BREATHING_PRESENT ||
+                r.response == UserResponseType.RESPONSIVE_CONFIRMED) {
+                handoffLatched = false
+            }
+            stepIndex = plan.plannedSteps.size  // out of range on purpose
+            voice.advanceStep()
+            retryCount = 0
+            currentCycle?.cancel()
+            tts.interrupt()
+            pushState { it.copy(
+                timestampSec = nowSec(),
+                loopStatus = LoopStatus.WAITING,
+                completionState = StepCompletionState.COMPLETED,
+                currentStepIndex = stepIndex,
+                rationale = "Plan complete; user confirmed (${r.response.name.lowercase()}).",
+            ) }
+            val (closer, closerUrgency) = resolution
+                ?: ("Good. Keep watching them and tell me if anything changes." to UrgencyLevel.LOW)
+            currentCycle = scope.launch {
+                voice.publishSpokenLine(closer, closerUrgency)
+                try { tts.speakAwait(closer, closerUrgency) } catch (_: Throwable) {}
+            }
+            return
+        }
+
         apply(feedback, repo.decisionState.value.urgency)
 
         // After an advancement (or escalation), speak the next instruction.
@@ -138,6 +223,10 @@ class GuidanceLoopEngine(
     }
 
     private fun triggerFreshCycle() {
+        // User-driven transition: speak immediately, no debounce delay.
+        // The user just told us to advance — holding their instruction
+        // for 600ms would feel broken.
+        pendingCycleJob?.cancel()
         currentCycle?.cancel()
         currentCycle = scope.launch {
             runCycle(
@@ -149,6 +238,7 @@ class GuidanceLoopEngine(
     }
 
     fun stop() {
+        pendingCycleJob?.cancel()
         currentCycle?.cancel()
         loopJob?.cancel()
         tts.interrupt()
@@ -161,8 +251,28 @@ class GuidanceLoopEngine(
      * perception repo — frames decay naturally over `maxFrameAgeSec`.
      * Called from MainActivity on both stop and re-start.
      */
+    /**
+     * Enable or disable the loop. While inactive, any in-flight TTS is
+     * interrupted and no future state update, utterance, or cycle can
+     * produce audio. MainActivity calls `setActive(true)` on stream start
+     * and `setActive(false)` on stream stop.
+     */
+    fun setActive(value: Boolean) {
+        active = value
+        if (!value) {
+            Log.i(TAG, "guidance deactivated — killing any audio")
+            pendingCycleJob?.cancel()
+            pendingCycleJob = null
+            currentCycle?.cancel()
+            currentCycle = null
+            tts.interrupt()
+        }
+    }
+
     fun reset() {
         Log.i(TAG, "guidance reset()")
+        pendingCycleJob?.cancel()
+        pendingCycleJob = null
         currentCycle?.cancel()
         currentCycle = null
         tts.interrupt()
@@ -173,6 +283,11 @@ class GuidanceLoopEngine(
         retryCount = 0
         escalation = EscalationLevel.NONE
         manualWakeActive = false
+        planCompleted = false
+        handoffLatched = false
+        lastSpokenStepIndex = -1
+        lastSpokenEscalation = EscalationLevel.NONE
+        lastSpeakStartMs = 0L
 
         voice.resetSteps()
         _state.value = GuidanceLoopState.initial()
@@ -189,6 +304,10 @@ class GuidanceLoopEngine(
      * Safe to call anytime: cancels any in-flight cycle first.
      */
     fun triggerManualWake() {
+        if (!active) {
+            Log.i(TAG, "triggerManualWake() ignored — guidance inactive")
+            return
+        }
         currentCycle?.cancel()
         tts.interrupt()
         Log.i(TAG, "triggerManualWake() — Ask AI button pressed")
@@ -252,7 +371,9 @@ class GuidanceLoopEngine(
         UserResponseType.BREATHING_ABSENT -> "Point the camera at the chest."
         UserResponseType.BREATHING_PRESENT -> "Keep watching. Check again in a moment."
         UserResponseType.BLEEDING_WORSE -> "Show me where the bleeding is."
-        UserResponseType.BLEEDING_BETTER -> "Keep pressure on the wound."
+        UserResponseType.BLEEDING_BETTER -> "Good. Keep light pressure. Call 911 if it starts again."
+        UserResponseType.UNRESPONSIVE_CONFIRMED -> "Call 911 now. Tell them they're unresponsive."
+        UserResponseType.RESPONSIVE_CONFIRMED -> "Good. Stay with them and keep them calm."
         UserResponseType.CANT_DO -> "Describe what you see."
         UserResponseType.DONT_KNOW, UserResponseType.UNCLEAR ->
             "Tell me what happened."
@@ -267,17 +388,29 @@ class GuidanceLoopEngine(
         decision: DecisionState,
         clarification: ClarificationState,
     ) {
+        if (!active) return
         val planId = planIdentity(plan)
         val planChanged = planId != lastPlanId
         val urgencyUp = decision.urgency.ordinal > lastUrgency.ordinal
 
         // Silent / passive statuses — cancel any in-flight cycle and go idle.
         // Exception: never cancel an in-flight manual-wake cycle; it's the
-        // user's explicit request and must always get a reply.
+        // user's explicit request and must always get a reply. Also honour
+        // SPEAK_PROTECT_MS — a single NOT_READY frame shouldn't clip a
+        // sentence that just started.
         val status = plan.status
-        if (status == ActionPlanStatus.NOT_READY || status == ActionPlanStatus.MONITOR_ONLY) {
-            if (_state.value.loopStatus != LoopStatus.IDLE && !manualWakeActive) {
+        val silentStatus = status == ActionPlanStatus.NOT_READY ||
+            status == ActionPlanStatus.MONITOR_ONLY ||
+            plan.primaryAction == ActionType.LOCATE_PATIENT
+        if (silentStatus) {
+            val sinceSpeak = System.currentTimeMillis() - lastSpeakStartMs
+            val stillProtected = currentCycle?.isActive == true &&
+                sinceSpeak < SPEAK_PROTECT_MS
+            if (_state.value.loopStatus != LoopStatus.IDLE &&
+                !manualWakeActive &&
+                !stillProtected) {
                 currentCycle?.cancel()
+                pendingCycleJob?.cancel()
                 tts.interrupt()
                 _state.value = _state.value.copy(
                     timestampSec = nowSec(),
@@ -299,16 +432,43 @@ class GuidanceLoopEngine(
             return
         }
 
-        if (planChanged || urgencyUp) {
-            // Interrupt whatever we were doing — the picture changed.
+        // If a critical CPR / 911 handoff is latched, stay silent through
+        // any plan churn. The VLM pipeline catching up to what the user
+        // already told us shouldn't un-handoff them.
+        if (handoffLatched) {
+            lastPlanId = planId
+            lastUrgency = decision.urgency
+            return
+        }
+
+        if (planChanged) {
+            // Plan actually changed — the picture changed. Interrupt.
             currentCycle?.cancel()
+            pendingCycleJob?.cancel()
             tts.interrupt()
             retryCount = 0
             escalation = EscalationLevel.NONE
-            if (planChanged) {
-                stepIndex = 0
-                voice.resetSteps()
-            }
+            stepIndex = 0
+            voice.resetSteps()
+            planCompleted = false
+            lastSpokenStepIndex = -1
+            lastSpokenEscalation = EscalationLevel.NONE
+        } else if (urgencyUp) {
+            // Urgency bumped but the plan and step are the same. Don't
+            // interrupt the in-flight utterance — ElevenLabs voice settings
+            // are locked at the start anyway, and clipping a sentence mid-
+            // word just to restart it louder sounds worse than letting it
+            // finish. The next cycle will use the higher urgency.
+            retryCount = 0
+        }
+
+        // Suppress further cycles once the user has worked through the
+        // whole plan — don't re-speak the last step after the user said
+        // "it stopped".
+        if (planCompleted && !planChanged && !urgencyUp) {
+            lastPlanId = planId
+            lastUrgency = decision.urgency
+            return
         }
 
         // Perception-driven auto-advance: if the camera already shows what
@@ -330,8 +490,70 @@ class GuidanceLoopEngine(
         lastPlanId = planId
         lastUrgency = decision.urgency
 
-        currentCycle = scope.launch {
-            runCycle(plan, decision, clarification)
+        // Don't re-speak if nothing material changed: same step, same
+        // escalation, and we already delivered this step once. Unrelated
+        // perception twitches (a confidence drift, a new frame) otherwise
+        // re-enter this path and re-speak the same instruction forever.
+        val nothingNew = !planChanged && !urgencyUp &&
+            stepIndex == lastSpokenStepIndex &&
+            escalation == lastSpokenEscalation
+        if (nothingNew) return
+
+        // If a cycle is already speaking the current step, let it finish —
+        // rapid restarts produce the "burst of clipped responses" the user
+        // saw when the VLM pipeline landed a flurry of updates.
+        if (currentCycle?.isActive == true &&
+            stepIndex == lastSpokenStepIndex &&
+            escalation == lastSpokenEscalation) return
+
+        scheduleCycle()
+    }
+
+    /**
+     * Debounce cycle launches. The combine() collector fires once per
+     * upstream emission, and the Phase-2 pipeline tends to emit several
+     * correlated state updates in a sub-second burst after a VLM response
+     * lands. Coalescing them into a single delayed launch means we speak
+     * once, with the settled state, instead of starting and canceling
+     * TTS three times in a row.
+     *
+     * Also enforces a minimum "protected speaking window" — once a cycle
+     * has actually started speaking, another state-driven cycle launch
+     * must wait [SPEAK_PROTECT_MS] before it can interrupt. Keeps a single
+     * coherent sentence from being clipped by a late VLM update.
+     */
+    private fun scheduleCycle() {
+        if (!active) return
+        pendingCycleJob?.cancel()
+        pendingCycleJob = scope.launch {
+            delay(CYCLE_DEBOUNCE_MS)
+            if (!active) return@launch
+
+            // If we're already inside the protected window of a cycle we
+            // recently started, push ourselves out further rather than
+            // canceling. The user would rather hear one full sentence
+            // than a clipped burst.
+            val sinceSpeak = System.currentTimeMillis() - lastSpeakStartMs
+            if (currentCycle?.isActive == true && sinceSpeak < SPEAK_PROTECT_MS) {
+                delay(SPEAK_PROTECT_MS - sinceSpeak)
+            }
+            if (!active) return@launch
+
+            // Re-check after waiting: another advance / utterance may have
+            // superseded us, or the in-flight cycle is still speaking the
+            // same thing we would speak.
+            if (currentCycle?.isActive == true &&
+                stepIndex == lastSpokenStepIndex &&
+                escalation == lastSpokenEscalation) return@launch
+
+            currentCycle?.cancel()
+            currentCycle = scope.launch {
+                runCycle(
+                    repo.actionPlanState.value,
+                    repo.decisionState.value,
+                    repo.clarificationState.value,
+                )
+            }
         }
     }
 
@@ -370,6 +592,15 @@ class GuidanceLoopEngine(
         decision: DecisionState,
         clarification: ClarificationState,
     ) {
+        if (!active) return
+        // LOCATE_PATIENT has no useful spoken guidance at this stage —
+        // "point the camera at whoever needs help" adds noise when the
+        // upstream signal is usually wrong anyway (close-ups of a wound
+        // often register as person_visible=no). Stay silent.
+        if (plan.primaryAction == ActionType.LOCATE_PATIENT) {
+            markIdle("Plan is locate_patient; holding silent.")
+            return
+        }
         adaptation.reactToContext(decision.urgency, escalation, retryCount)
         val adapt = adaptation.state.value
 
@@ -397,6 +628,11 @@ class GuidanceLoopEngine(
             escalationLevel = escalation,
             rationale = "Speaking (${adapt.currentMode.name.lowercase()}) \"$toSpeak\".",
         ) }
+        // Mark this step as spoken so onUpdate won't re-fire it on the
+        // next perception tick.
+        lastSpokenStepIndex = stepIndex
+        lastSpokenEscalation = escalation
+        lastSpeakStartMs = System.currentTimeMillis()
         voice.publishSpokenLine(toSpeak, urgency)
         Log.i(TAG, "TTS speak (${urgency.name}): $toSpeak")
         try {
@@ -431,7 +667,9 @@ class GuidanceLoopEngine(
             UserResponseType.DONE,
             UserResponseType.BREATHING_PRESENT,
             UserResponseType.BREATHING_ABSENT,
-            UserResponseType.BLEEDING_BETTER -> FeedbackDecision(
+            UserResponseType.BLEEDING_BETTER,
+            UserResponseType.RESPONSIVE_CONFIRMED,
+            UserResponseType.UNRESPONSIVE_CONFIRMED -> FeedbackDecision(
                 action = FeedbackAction.ADVANCE,
                 speakText = null,
                 advanceStep = true,
@@ -577,6 +815,63 @@ class GuidanceLoopEngine(
 
     // --------------------------------------------------------- helpers
 
+    /**
+     * Plan-agnostic critical close-out. These patient-state cues mean the
+     * same thing no matter what plan was active a moment ago: escalate and
+     * hand off. Always wins over any per-plan resolution.
+     */
+    private fun criticalResolution(
+        response: UserResponseType,
+    ): Pair<String, UrgencyLevel>? = when (response) {
+        UserResponseType.BREATHING_ABSENT ->
+            "Call 911 now. Start chest compressions — press hard and fast in the center of their chest, about two per second. Don't stop until help arrives." to UrgencyLevel.CRITICAL
+        UserResponseType.UNRESPONSIVE_CONFIRMED ->
+            "Call 911 now. Tell them the person is unresponsive. If they're not breathing, start chest compressions right away." to UrgencyLevel.CRITICAL
+        else -> null
+    }
+
+    /**
+     * Per-plan close-out line + urgency for a resolution utterance. Returns
+     * null when [response] is not a clean resolution for [action] — in that
+     * case the loop uses its default generic ending. Critical outcomes
+     * (unresponsive, not breathing) get a handoff-level close-out.
+     */
+    private fun resolutionFor(
+        action: ActionType,
+        response: UserResponseType,
+    ): Pair<String, UrgencyLevel>? = when (action) {
+        ActionType.CONTROL_BLEEDING -> when (response) {
+            UserResponseType.BLEEDING_BETTER, UserResponseType.DONE ->
+                "Good. Keep light pressure on the wound and watch for it to start again. Call 911 if it gets worse." to UrgencyLevel.LOW
+            else -> null
+        }
+        ActionType.ASSESS_BREATHING -> when (response) {
+            UserResponseType.BREATHING_PRESENT ->
+                "Good. Keep watching their chest. Tell me if their breathing changes." to UrgencyLevel.LOW
+            UserResponseType.BREATHING_ABSENT ->
+                "Call 911 now. Tell them the person isn't breathing. Stay with me." to UrgencyLevel.CRITICAL
+            else -> null
+        }
+        ActionType.ASSESS_RESPONSIVENESS -> when (response) {
+            UserResponseType.RESPONSIVE_CONFIRMED, UserResponseType.YES, UserResponseType.DONE ->
+                "Good. Stay with them and keep them calm. Tell me if anything changes." to UrgencyLevel.LOW
+            UserResponseType.UNRESPONSIVE_CONFIRMED, UserResponseType.NO ->
+                "Call 911 now. Tell them the person is unresponsive. I'll keep watching." to UrgencyLevel.CRITICAL
+            else -> null
+        }
+        ActionType.PROTECT_AIRWAY -> when (response) {
+            UserResponseType.DONE, UserResponseType.YES ->
+                "Good. Keep their airway clear and watch their breathing." to UrgencyLevel.LOW
+            else -> null
+        }
+        ActionType.ENSURE_SCENE_SAFETY -> when (response) {
+            UserResponseType.YES, UserResponseType.DONE ->
+                "Good. Now focus on the person. Tell me what you see." to UrgencyLevel.MODERATE
+            else -> null
+        }
+        else -> null
+    }
+
     private fun currentStep(plan: ActionPlanState): ActionStep? {
         if (plan.plannedSteps.isEmpty()) return null
         val idx = stepIndex.coerceAtMost(plan.plannedSteps.lastIndex)
@@ -602,13 +897,11 @@ class GuidanceLoopEngine(
         // At MINIMAL level we strip any leading prefix — the whole point
         // of minimal mode is to keep output to 1–3 words.
         if (level == InstructionLevel.MINIMAL) return base
-        val prefix = when {
-            plan.status == ActionPlanStatus.READY_WITH_CAUTION &&
-                escalation == EscalationLevel.NONE &&
-                plan.safetyFlags.isNotEmpty() -> "Careful. "
-            escalation == EscalationLevel.URGENT -> "Now. "
-            else -> ""
-        }
+        // Only prepend "Now. " for explicit URGENT escalation. The old
+        // "Careful. " prefix on every READY_WITH_CAUTION step produced
+        // stuttering "Careful. Careful." bursts when the plan oscillated
+        // and made routine guidance feel alarmist.
+        val prefix = if (escalation == EscalationLevel.URGENT) "Now. " else ""
         return prefix + base
     }
 
@@ -654,6 +947,14 @@ class GuidanceLoopEngine(
     companion object {
         private const val TAG = "GuidanceLoop"
         private const val MAX_RETRIES = 2
+        // How long to wait for Phase-2 state emissions to settle before
+        // kicking off a spoken cycle. Short enough to still feel snappy,
+        // long enough to coalesce a VLM-response burst.
+        private const val CYCLE_DEBOUNCE_MS = 600L
+        // Minimum time from the start of an utterance during which a
+        // state-driven relaunch must yield instead of canceling. Prevents
+        // the "Careful. Careful. Careful." stutter from rapid plan churn.
+        private const val SPEAK_PROTECT_MS = 2_500L
     }
 }
 

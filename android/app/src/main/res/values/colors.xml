@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="aegis_red">#FF2E2E</color>
+    <color name="aegis_red_dim">#CC2323</color>
+    <color name="aegis_bg">#0A0A0B</color>
+    <color name="aegis_surface">#15161A</color>
+    <color name="aegis_surface_alt">#1E2026</color>
+    <color name="aegis_text">#F1F1F2</color>
+    <color name="aegis_text_dim">#9A9DA6</color>
+    <color name="aegis_divider">#2A2C33</color>
+</resources>

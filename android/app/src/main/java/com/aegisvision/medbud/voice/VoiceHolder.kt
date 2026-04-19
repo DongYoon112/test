@@ -3,7 +3,7 @@ package com.aegisvision.medbud.voice
 import android.content.Context
 import android.util.Log
 import com.aegisvision.medbud.BuildConfig
-import com.aegisvision.medbud.guidance.AudioCaptureManager
+import com.aegisvision.medbud.guidance.AdaptiveAudioPipeline
 import com.aegisvision.medbud.guidance.GuidanceLoopEngine
 import com.aegisvision.medbud.guidance.RealtimeResponseListener
 import com.aegisvision.medbud.perception.PerceptionHolder
@@ -49,8 +49,11 @@ object VoiceHolder {
                 apiKey = BuildConfig.ELEVENLABS_API_KEY,
                 modelId = BuildConfig.ELEVENLABS_STT_MODEL_ID.ifBlank { "scribe_v1" },
             )
-            val audio = AudioCaptureManager(context.applicationContext)
-            val listener = RealtimeResponseListener(audio = audio, stt = stt)
+            // Adaptive pipeline: VAD-gated utterances + platform voice
+            // isolation toggled on only when the noise floor warrants. Much
+            // lower latency than the old fixed-3.5s chunking.
+            val pipeline = AdaptiveAudioPipeline(context.applicationContext)
+            val listener = RealtimeResponseListener(pipeline = pipeline, stt = stt)
             _listener = listener
 
             // ChatGPT-style turn-taking: continuous mic, paused only while

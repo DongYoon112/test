@@ -126,9 +126,11 @@ class AdaptationEngine {
             return GuidanceMode.URGENT
         }
 
-        val trigger = retryCount > 0 ||
-            failureRate > 0.5 ||
-            reliability < 0.4 ||
+        // Only drop out of NORMAL when we have real evidence of trouble —
+        // full instructions are better for a user still learning the flow.
+        val trigger = retryCount > 1 ||
+            failureRate > 0.7 ||
+            reliability < 0.3 ||
             escalation == EscalationLevel.ELEVATED
 
         if (trigger) return GuidanceMode.SIMPLIFIED
@@ -147,9 +149,12 @@ class AdaptationEngine {
     private fun pickLevel(mode: GuidanceMode, failureRate: Double): InstructionLevel =
         when (mode) {
             GuidanceMode.NORMAL -> InstructionLevel.FULL
-            GuidanceMode.SIMPLIFIED -> InstructionLevel.SHORT
+            // SIMPLIFIED still gets FULL phrases — we just change pacing /
+            // urgency / TTS settings, not the wording. This keeps the demo
+            // intelligible instead of degrading to "Find." / "Move.".
+            GuidanceMode.SIMPLIFIED -> InstructionLevel.FULL
             GuidanceMode.URGENT ->
-                if (failureRate > 0.5) InstructionLevel.MINIMAL else InstructionLevel.SHORT
+                if (failureRate > 0.7) InstructionLevel.MINIMAL else InstructionLevel.SHORT
             GuidanceMode.CRITICAL_OVERRIDE -> InstructionLevel.MINIMAL
         }
 

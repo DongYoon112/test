@@ -1,3 +1,10 @@
 <resources>
-    <string name="app_name">POV Streamer</string>
+    <string name="app_name">Aegis Vision</string>
+    <string name="app_tagline">First-response vision assistant</string>
+    <string name="status_disconnected">Disconnected</string>
+    <string name="btn_connect">Connect glasses</string>
+    <string name="btn_start_stream">Start stream</string>
+    <string name="btn_stop_stream">Stop stream</string>
+    <string name="btn_ask_ai">Ask AI</string>
+    <string name="btn_logs">Logs</string>
 </resources>

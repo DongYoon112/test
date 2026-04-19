@@ -86,11 +86,13 @@ class ElevenLabsTTSManager(
             return
         }
 
+        // Pause the continuous listener FIRST — before interrupt + fetch —
+        // so an utterance during the 300–500 ms fetch window can't cancel
+        // the cycle and cut playback off at the knees.
+        onPlaybackStart?.invoke()
+        try {
         interrupt()
         val audio = withContext(Dispatchers.IO) { fetchAudio(text, urgency) } ?: return
-
-        // Pause any continuous mic listener so the AI doesn't hear itself.
-        onPlaybackStart?.invoke()
         withContext(Dispatchers.Main) {
             suspendCancellableCoroutine<Unit> { cont ->
                 val tmp = File.createTempFile("tts_", ".mp3", context.cacheDir)
@@ -112,7 +114,8 @@ class ElevenLabsTTSManager(
                     tmp.delete()
                     if (player === mp) player = null
                     if (currentFile === tmp) currentFile = null
-                    onPlaybackEnd?.invoke()
+                    // onPlaybackEnd is called by the outer `finally` so it
+                    // fires on every path (including cancellation).
                     if (cont.isActive) cont.resume(Unit)
                 }
                 try {
@@ -172,6 +175,9 @@ class ElevenLabsTTSManager(
                     // finish() already handles release via the path above.
                 }
             }
+        }
+        } finally {
+            onPlaybackEnd?.invoke()
         }
     }
 
